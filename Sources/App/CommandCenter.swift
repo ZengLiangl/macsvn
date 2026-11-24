@@ -400,10 +400,15 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         // quiet：只读的取数命令（日志/状态/信息/比较）不弹进度窗口。
         // 这类输出是给程序解析的，原样显示出来只是一屏 XML；它们的失败
         // 已经由各自的 finish 用对话框或文本窗口呈现，不需要第二个框。
+        // 成功时不弹命令窗口：默认只在失败时把窗口叫出来给出错信息，
+        // 免得每次提交/更新都弹一屏 svn 原始输出。
+        let deferWindow = !quiet && database.loadSettings().hideProgressOnSuccess
         let progress = ProgressWindow()
-        if !quiet {
+        var presented = false
+        if !quiet, !deferWindow {
             keep(progress)
             progress.present(title: title, command: SvnTask.display(exe: exe, args: args))
+            presented = true
         }
         let task = SvnTask()
         progress.onStop = { task.cancel() }
@@ -411,16 +416,26 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             let result: SvnResult
             if let password {
                 result = task.runPty(exe: exe, args: args, cwd: cwd, username: name ?? "", password: password) { chunk in
-                    if !quiet { progress.append(chunk) }
+                    if presented { progress.append(chunk) }
                 }
             } else {
                 result = task.run(exe: exe, args: args, cwd: cwd) { chunk in
-                    if !quiet { progress.append(chunk) }
+                    if presented { progress.append(chunk) }
                 }
             }
             DispatchQueue.main.async {
                 if write { self.busy.remove(root) }
-                if !quiet { progress.finish(result) }
+                if !quiet {
+                    if presented {
+                        progress.finish(result)
+                    } else if result.code != 0 {
+                        // 失败才把窗口叫出来，让用户看到 svn 的错误输出
+                        self.keep(progress)
+                        progress.present(title: title, command: SvnTask.display(exe: exe, args: args))
+                        progress.append(result.combinedText)
+                        progress.finish(result)
+                    }
+                }
                 AppLog.write("\(result.display) -> \(result.code)")
                 if result.code != 0, promptsLeft > 0, SvnFailure.isCertificate(result), !trust,
                    Dialog.confirm("证书不受信任", "是否只对下一次尝试临时信任服务器证书？", ok: "临时信任") {

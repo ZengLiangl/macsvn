@@ -18,6 +18,7 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         (.revert, "恢复", NSButton(checkboxWithTitle: "恢复", target: nil, action: nil)),
         (.lock, "加锁", NSButton(checkboxWithTitle: "加锁", target: nil, action: nil))
     ]
+    private let hideProgress = NSButton(checkboxWithTitle: "命令成功时不弹执行窗口（失败才弹）", target: nil, action: nil)
     private let toolbarSelection = NSButton(checkboxWithTitle: "工具栏按钮使用当前选中项", target: nil, action: nil)
     private let diffTool = NSTextField()
     private let table = NSTableView()
@@ -47,6 +48,9 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
             box.target = self
             box.action = #selector(saveSettings)
         }
+        hideProgress.state = settings.hideProgressOnSuccess ? .on : .off
+        hideProgress.target = self
+        hideProgress.action = #selector(saveSettings)
         toolbarSelection.state = settings.toolbarUsesSelection ? .on : .off
         diffTool.stringValue = settings.externalDiffTool
         toolbarSelection.target = self
@@ -90,7 +94,7 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         promoteRow.orientation = .horizontal
         let pathPickRow = NSStackView(views: [NSTextField(labelWithString: "先选路径：")] + pathPickItems.map(\.2))
         pathPickRow.orientation = .horizontal
-        let root = NSStackView(views: [pathRow, promoteRow, pathPickRow, toolbarSelection, diffTool, scroll, manage, commands, extensionButton, help, statusLabel])
+        let root = NSStackView(views: [pathRow, promoteRow, pathPickRow, hideProgress, toolbarSelection, diffTool, scroll, manage, commands, extensionButton, help, statusLabel])
         root.orientation = .vertical
         root.alignment = .leading
         root.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
@@ -159,6 +163,7 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         settings.confirmCommands = pathPickItems
             .filter { $0.2.state == .on }
             .map { $0.0.rawValue }
+        settings.hideProgressOnSuccess = hideProgress.state == .on
         settings.toolbarUsesSelection = toolbarSelection.state == .on
         settings.externalDiffTool = diffTool.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         database.saveSettings(settings)

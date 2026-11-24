@@ -129,6 +129,8 @@ public struct AppSettings: Codable, Equatable {
     public var commitMessageHistory: [String]
     /// 执行前先弹「选择路径」窗口的动作（rawValue）。文档：添加、删除、恢复、加锁。
     public var confirmCommands: [String]
+    /// 命令执行成功时不弹进度窗口，只在失败时弹出来给出错信息。
+    public var hideProgressOnSuccess: Bool
 
     public static var detected: AppSettings {
         AppSettings(
@@ -137,7 +139,8 @@ public struct AppSettings: Codable, Equatable {
             toolbarUsesSelection: false,
             externalDiffTool: "",
             commitMessageHistory: [],
-            confirmCommands: ["add", "revert", "deleteVersioned", "lock"]
+            confirmCommands: ["add", "revert", "deleteVersioned", "lock"],
+            hideProgressOnSuccess: true
         )
     }
 
@@ -151,7 +154,7 @@ public struct AppSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case svnPath, promotedActions, toolbarUsesSelection, externalDiffTool
-        case commitMessageHistory, confirmCommands
+        case commitMessageHistory, confirmCommands, hideProgressOnSuccess
         case promoteCommitAndUpdate
     }
 
@@ -161,7 +164,8 @@ public struct AppSettings: Codable, Equatable {
         toolbarUsesSelection: Bool,
         externalDiffTool: String,
         commitMessageHistory: [String],
-        confirmCommands: [String]
+        confirmCommands: [String],
+        hideProgressOnSuccess: Bool = true
     ) {
         self.svnPath = svnPath
         self.promotedActions = promotedActions
@@ -169,6 +173,7 @@ public struct AppSettings: Codable, Equatable {
         self.externalDiffTool = externalDiffTool
         self.commitMessageHistory = commitMessageHistory
         self.confirmCommands = confirmCommands
+        self.hideProgressOnSuccess = hideProgressOnSuccess
     }
 
     public init(from decoder: Decoder) throws {
@@ -179,6 +184,7 @@ public struct AppSettings: Codable, Equatable {
         externalDiffTool = try c.decodeIfPresent(String.self, forKey: .externalDiffTool) ?? ""
         commitMessageHistory = try c.decodeIfPresent([String].self, forKey: .commitMessageHistory) ?? []
         confirmCommands = try c.decodeIfPresent([String].self, forKey: .confirmCommands) ?? fallback.confirmCommands
+        hideProgressOnSuccess = try c.decodeIfPresent(Bool.self, forKey: .hideProgressOnSuccess) ?? fallback.hideProgressOnSuccess
         if let promoted = try c.decodeIfPresent([String].self, forKey: .promotedActions) {
             promotedActions = promoted
         } else {
@@ -196,6 +202,7 @@ public struct AppSettings: Codable, Equatable {
         try c.encode(externalDiffTool, forKey: .externalDiffTool)
         try c.encode(commitMessageHistory, forKey: .commitMessageHistory)
         try c.encode(confirmCommands, forKey: .confirmCommands)
+        try c.encode(hideProgressOnSuccess, forKey: .hideProgressOnSuccess)
     }
 
     public static func detectSvn() -> String {
