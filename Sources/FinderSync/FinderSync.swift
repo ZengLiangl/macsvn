@@ -1,6 +1,26 @@
 import AppKit
 import FinderSync
 
+/// 菜单项 → 命令的映射。
+/// Finder 会把扩展返回的菜单复制到自己进程再显示，菜单项的 representedObject
+/// 在传递过程中会丢失（实测点击后取不到 URL）。tag 是整型，能稳定保留，
+/// 所以用「自增 tag → 命令」的全局表来还原。
+final class MenuInvocationStore {
+    static let shared = MenuInvocationStore()
+    private var map: [Int: CommandInvocation] = [:]
+    private var next = 1
+
+    func put(_ invocation: CommandInvocation) -> Int {
+        let tag = next
+        next += 1
+        map[tag] = invocation
+        if map.count > 400 { map.removeAll() }
+        return tag
+    }
+
+    func get(_ tag: Int) -> CommandInvocation? { map[tag] }
+}
+
 /// 菜单点击的接收者。
 /// 之前把菜单项的 target 设成控制器本身，一旦系统重建/回收控制器实例，
 /// target 变 nil，点击就静默失效（菜单照旧显示，但点了没反应）。
@@ -163,14 +183,7 @@ final class FinderSyncController: FIFinderSync {
         let sub = NSMenu()
         sub.autoenablesItems = false
 
-        // 诊断项：target=self 的普通项，只写日志、不调主程序
-        let probe1 = NSMenuItem(title: "① 测试点击（target=self）", action: #selector(probeSelf(_:)), keyEquivalent: "")
-        probe1.target = self
-        sub.addItem(probe1)
-        // 诊断项：target=nil，走响应链
-        let probe2 = NSMenuItem(title: "② 测试点击（target=nil）", action: #selector(probeNil(_:)), keyEquivalent: "")
-        probe2.target = nil
-        sub.addItem(probe2)
+
         // 无论是否提升到主菜单，子菜单里都保留一份：
         // 主菜单项在部分系统版本上派发不稳定，子菜单是更可靠的入口。
         add(sub, "提交…", .commit, flags.commit, paths)
@@ -264,10 +277,11 @@ final class FinderSyncController: FIFinderSync {
         _ paths: [String]
     ) {
         // shift 由点击时的键盘状态决定（见 fire），这里保持 false
-        guard let url = CommandURLCodec.encode(CommandInvocation(action: action, paths: paths)) else { return }
+        let invocation = CommandInvocation(action: action, paths: paths)
         let item = NSMenuItem(title: title, action: #selector(fire(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = url
+        item.tag = MenuInvocationStore.shared.put(invocation)
+        item.representedObject = CommandURLCodec.encode(invocation)
         // 不可用时置灰而不是隐藏：菜单结构保持稳定，用户能看出「有这项、当前不可用」
         item.isEnabled = enabled
         FinderSyncLog.write("  菜单项 \(title) enabled=\(enabled)")
@@ -275,26 +289,21 @@ final class FinderSyncController: FIFinderSync {
     }
 
     @objc func fire(_ sender: NSMenuItem) {
-        guard let url = sender.representedObject as? URL, var invocation = CommandURLCodec.decode(url) else { return }
-        // 编码时 shift=true 表示「这个命令支持 SHIFT 临时切换路径选择窗口」，
-        // 这里再按实际按键决定是否翻转。不支持的命令保持 false。
+        // 不再依赖 representedObject（Finder 复制菜单时会丢），改按 tag 还原命令
+        guard var invocation = MenuInvocationStore.shared.get(sender.tag) else {
+            FinderSyncLog.write("点击失败：tag=\(sender.tag) 找不到命令（标题=\(sender.title)）")
+            return
+        }
+        // shift 编码为 true 表示该命令支持 SHIFT 临时翻转路径选择窗口
         if invocation.shift {
             invocation.shift = NSEvent.modifierFlags.contains(.shift)
         }
         guard let updated = CommandURLCodec.encode(invocation) else {
-            FinderSyncLog.write("菜单点击失败：URL 编码失败 \(invocation.action.rawValue)")
+            FinderSyncLog.write("点击失败：URL 编码失败 \(invocation.action.rawValue)")
             return
         }
         let opened = NSWorkspace.shared.open(updated)
-        FinderSyncLog.write("菜单点击 \(invocation.action.rawValue) 项数=\(invocation.paths.count) 发送=\(opened)")
-    }
-
-    @objc func probeSelf(_ sender: NSMenuItem) {
-        FinderSyncLog.write("探针① 被点击（target=self）")
-    }
-
-    @objc func probeNil(_ sender: NSMenuItem) {
-        FinderSyncLog.write("探针② 被点击（target=nil）")
+        FinderSyncLog.write("点击 \(invocation.action.rawValue) 项数=\(invocation.paths.count) 发送=\(opened)")
     }
 
     private func badgeImage(text: String, color: NSColor) -> NSImage {
