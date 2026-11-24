@@ -1,6 +1,31 @@
 import AppKit
 import FinderSync
 
+/// 菜单点击的接收者。
+/// 之前把菜单项的 target 设成控制器本身，一旦系统重建/回收控制器实例，
+/// target 变 nil，点击就静默失效（菜单照旧显示，但点了没反应）。
+/// 用一个进程级单例做 target，动作不依赖控制器是否还活着。
+final class MenuActionTarget: NSObject {
+    static let shared = MenuActionTarget()
+
+    @objc func fire(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL,
+              var invocation = CommandURLCodec.decode(url) else {
+            FinderSyncLog.write("点击失败：菜单项没有可用的命令")
+            return
+        }
+        if invocation.shift {
+            invocation.shift = NSEvent.modifierFlags.contains(.shift)
+        }
+        guard let updated = CommandURLCodec.encode(invocation) else {
+            FinderSyncLog.write("点击失败：URL 编码失败 \(invocation.action.rawValue)")
+            return
+        }
+        let ok = NSWorkspace.shared.open(updated)
+        FinderSyncLog.write("点击 \(invocation.action.rawValue) 项数=\(invocation.paths.count) 发送=\(ok)")
+    }
+}
+
 /// 当前存活的扩展控制器。
 /// 之前把 self 的裸指针交给通知中心，控制器释放后通知再到达就会在
 /// objc_retain 处崩掉（实测崩溃报告：darwinCallback → objc_retain → SIGSEGV）。
@@ -112,6 +137,7 @@ final class FinderSyncController: FIFinderSync {
             return outsideMenu(paths: paths)
         }
         let settings = database.loadSettings()
+        FinderSyncLog.write("构建菜单 paths=\(paths.count) commit=\(flags.commit) update=\(flags.update) 提升=\(settings.promotedActions)")
         let menu = NSMenu()
         menu.autoenablesItems = false
 
@@ -225,6 +251,7 @@ final class FinderSyncController: FIFinderSync {
         item.representedObject = url
         // 不可用时置灰而不是隐藏：菜单结构保持稳定，用户能看出「有这项、当前不可用」
         item.isEnabled = enabled
+        FinderSyncLog.write("  菜单项 \(title) enabled=\(enabled)")
         menu.addItem(item)
     }
 
