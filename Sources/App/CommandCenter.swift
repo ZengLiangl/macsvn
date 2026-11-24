@@ -35,6 +35,9 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { self.perform(invocation) }
             return
         }
+        // 命令来自访达菜单，此时访达在前台；不主动激活的话，
+        // 弹出的路径选择/进度窗口会被压在后面，看起来像"点了没反应"。
+        NSApp.activate(ignoringOtherApps: true)
         switch invocation.action {
         case .open:
             main?.showWindow(nil)

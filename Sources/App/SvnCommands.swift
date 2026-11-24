@@ -27,7 +27,9 @@ enum SvnCommands {
         ["commit", "-m", message, "--"] + paths
     }
     static func add(_ paths: [String], depth: String) -> [String] {
-        ["add", "--depth", depth, "--"] + paths
+        // --parents 必需：depth=empty 的稀疏检出里，目标文件的上级目录常常还没纳入
+        // 版本控制，不带 --parents 会报 E150000「Can't find parent directory's node」。
+        ["add", "--parents", "--depth", depth, "--"] + paths
     }
     static func revert(_ paths: [String], recursive: Bool) -> [String] {
         var args = ["revert"]
