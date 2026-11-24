@@ -31,6 +31,11 @@ final class MenuActionTarget: NSObject {
 /// objc_retain 处崩掉（实测崩溃报告：darwinCallback → objc_retain → SIGSEGV）。
 fileprivate weak var liveController: FinderSyncController?
 
+/// 控制器强引用保活。
+/// Finder 可能重建控制器实例：旧实例一旦被回收，它创建的那些菜单项的 target
+/// 就变成 nil，点击会静默失效（菜单照旧显示、点了没反应）。留一份强引用兜住。
+fileprivate var retainedControllers: [FinderSyncController] = []
+
 @objc(FinderSync)
 final class FinderSyncController: FIFinderSync {
     private let database = AppDatabase(root: SupportPaths.root)
@@ -44,6 +49,8 @@ final class FinderSyncController: FIFinderSync {
         applyRoots()
         installBadges()
         liveController = self
+        if retainedControllers.count >= 4 { retainedControllers.removeFirst() }
+        retainedControllers.append(self)
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let token = Unmanaged.passUnretained(self).toOpaque()
         observerToken = token
