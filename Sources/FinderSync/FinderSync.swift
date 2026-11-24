@@ -162,8 +162,10 @@ final class FinderSyncController: FIFinderSync {
 
         let sub = NSMenu()
         sub.autoenablesItems = false
-        if !settings.promotes(.commit) { add(sub, "提交…", .commit, flags.commit, paths) }
-        if !settings.promotes(.update) { add(sub, "更新", .update, flags.update, paths) }
+        // 无论是否提升到主菜单，子菜单里都保留一份：
+        // 主菜单项在部分系统版本上派发不稳定，子菜单是更可靠的入口。
+        add(sub, "提交…", .commit, flags.commit, paths)
+        add(sub, "更新", .update, flags.update, paths)
         if !(settings.promotes(.diffTwo) || settings.promotes(.diffBase)),
            let item = compareItem(flags: flags, paths: paths) {
             sub.addItem(item)
