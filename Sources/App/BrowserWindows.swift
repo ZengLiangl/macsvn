@@ -197,3 +197,78 @@ final class ChangesWindow: NSWindowController, NSTableViewDataSource, NSTableVie
         onPick(entries[row])
     }
 }
+
+/// 更新结果：把 svn update 的原始输出整理成「改了什么」的清单。
+final class UpdateWindow: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+    private let entries: [UpdateEntry]
+    private let table = NSTableView()
+
+    init(summary: UpdateSummary) {
+        self.entries = summary.entries
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 460),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        var title = "更新结果"
+        if let revision = summary.revision { title += " · r\(revision)" }
+        window.title = title
+        super.init(window: window)
+
+        table.dataSource = self
+        table.delegate = self
+        for (id, heading, width) in [("action", "动作", 90), ("path", "路径", 640)] {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+            column.title = heading
+            column.width = CGFloat(width)
+            table.addTableColumn(column)
+        }
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+
+        var parts: [String] = []
+        if let revision = summary.revision {
+            parts.append(summary.upToDate ? "已是最新版本 r\(revision)" : "已更新到 r\(revision)")
+        }
+        if summary.hasChanges {
+            let counts = Dictionary(grouping: summary.entries, by: \.label)
+                .map { "\($0.key) \($0.value.count)" }
+                .sorted()
+            parts.append("共 \(summary.entries.count) 项：" + counts.joined(separator: "、"))
+        } else {
+            parts.append("没有文件被修改")
+        }
+        let header = NSTextField(wrappingLabelWithString: parts.joined(separator: "；"))
+        header.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+
+        let root = NSStackView(views: [header] + summary.notes.map { NSTextField(wrappingLabelWithString: $0) } + [scroll])
+        root.orientation = .vertical
+        root.alignment = .leading
+        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = root
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
+            root.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
+            root.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
+            scroll.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24)
+        ])
+        window.center()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let entry = entries[row]
+        let value = tableColumn?.identifier.rawValue == "action" ? entry.label : entry.path
+        let field = NSTextField(labelWithString: value)
+        field.lineBreakMode = .byTruncatingMiddle
+        return field
+    }
+}

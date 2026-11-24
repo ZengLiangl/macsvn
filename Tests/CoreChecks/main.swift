@@ -147,4 +147,41 @@ let migrated = try! JSONDecoder().decode(AppSettings.self, from: Data(legacyJSON
 check(migrated.promotedActions.sorted() == ["commit", "update"], "legacy migration")
 check(migrated.confirmCommands == ["add"], "legacy confirm kept")
 
+// 更新输出解析
+let updateText = """
+Updating '.':
+U    a.txt
+A    c.txt
+D    d/b.txt
+Updated to revision 3.
+"""
+let summary = UpdateOutput.parse(updateText, cwd: URL(fileURLWithPath: "/wc"))
+check(summary.revision == "3", "update revision")
+check(summary.entries.count == 3, "update entry count")
+check(summary.entries.map(\.action) == ["U", "A", "D"], "update actions")
+check(summary.entries[0].label == "已更新", "label U")
+check(summary.entries[1].label == "新增", "label A")
+check(summary.entries[2].label == "删除", "label D")
+check(summary.entries[0].path == "/wc/a.txt", "path resolve")
+check(summary.hasChanges, "has changes")
+check(!summary.upToDate, "not up to date")
+
+// 已是最新
+let upToDate = """
+Updating '.':
+At revision 7.
+"""
+let fresh = UpdateOutput.parse(upToDate, cwd: URL(fileURLWithPath: "/wc"))
+check(fresh.revision == "7", "up-to-date revision")
+check(fresh.entries.isEmpty && fresh.upToDate, "up to date flag")
+
+// 冲突行也算改动
+let conflict = """
+Updating '.':
+   C   a.txt
+Updated to revision 9.
+"""
+let conflicted = UpdateOutput.parse(conflict, cwd: URL(fileURLWithPath: "/wc"))
+check(conflicted.entries.first?.label == "冲突", "conflict label")
+
 print("core checks passed")

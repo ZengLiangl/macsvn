@@ -96,8 +96,9 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         switch invocation.action {
         case .update:
             withPaths(invocation, paths) { [weak self] chosen in
-                self?.launch(title: "更新", actionArgs: SvnCommands.update(chosen, revision: nil), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { _ in
+                self?.launch(title: "更新", actionArgs: SvnCommands.update(chosen, revision: nil), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
                     self?.monitor?.scan(root: root.path)
+                    self?.showUpdateSummary(result, cwd: root)
                 }
             }
         case .updateToRevision:
@@ -107,8 +108,9 @@ final class CommandCenter: NSObject, NSWindowDelegate {
                 return
             }
             let value = revision == "HEAD" ? nil : revision
-            launch(title: "更新至指定版本", actionArgs: SvnCommands.update(paths, revision: value), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] _ in
+            launch(title: "更新至指定版本", actionArgs: SvnCommands.update(paths, revision: value), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
                 self?.monitor?.scan(root: root.path)
+                self?.showUpdateSummary(result, cwd: root)
             }
         case .commit:
             prepareCommit(paths: paths, cwd: root)
@@ -461,6 +463,25 @@ final class CommandCenter: NSObject, NSWindowDelegate {
                 finish(result)
             }
         }
+    }
+
+    /// 更新完成后给出可读的改动清单。
+    /// 没有任何改动就只在状态栏提示「已是最新」，不弹多余的窗口。
+    private func showUpdateSummary(_ result: SvnResult, cwd: URL) {
+        guard result.code == 0 else { return }
+        let summary = UpdateOutput.parse(result.combinedText, cwd: cwd)
+        guard summary.hasChanges else {
+            if let revision = summary.revision {
+                main?.setStatus("已是最新（r\(revision)）")
+            } else {
+                main?.setStatus("已是最新")
+            }
+            return
+        }
+        var text = "已更新 \(summary.entries.count) 项"
+        if let revision = summary.revision { text += "，当前 r\(revision)" }
+        main?.setStatus(text)
+        show(UpdateWindow(summary: summary))
     }
 
     /// 文档的「粘贴」：把先前 复制/剪切 记下的来源落到现在选中的目标文件夹。
