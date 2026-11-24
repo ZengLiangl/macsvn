@@ -1,26 +1,48 @@
 import AppKit
 import FinderSync
 
+/// 当前存活的扩展控制器。
+/// 之前把 self 的裸指针交给通知中心，控制器释放后通知再到达就会在
+/// objc_retain 处崩掉（实测崩溃报告：darwinCallback → objc_retain → SIGSEGV）。
+fileprivate weak var liveController: FinderSyncController?
+
 @objc(FinderSync)
 final class FinderSyncController: FIFinderSync {
     private let database = AppDatabase(root: SupportPaths.root)
     private var cache = StatusFile()
     private var known: Set<URL> = []
+    private var observerToken: UnsafeMutableRawPointer?
 
     override init() {
         super.init()
         cache = database.loadStatus()
         applyRoots()
         installBadges()
+        liveController = self
         let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let token = Unmanaged.passUnretained(self).toOpaque()
+        observerToken = token
         CFNotificationCenterAddObserver(
             center,
-            Unmanaged.passUnretained(self).toOpaque(),
+            token,
             darwinCallback,
             SupportPaths.statusNotification as CFString,
             nil,
             .deliverImmediately
         )
+    }
+
+    deinit {
+        if let token = observerToken {
+            // 传 nil 名称 = 注销该观察者的全部注册，避免类型不匹配的多余依赖
+            CFNotificationCenterRemoveObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                token,
+                nil,
+                nil
+            )
+        }
+        if liveController === self { liveController = nil }
     }
 
     override var toolbarItemName: String { "macsvn" }
@@ -213,8 +235,12 @@ final class FinderSyncController: FIFinderSync {
         if invocation.shift {
             invocation.shift = NSEvent.modifierFlags.contains(.shift)
         }
-        guard let updated = CommandURLCodec.encode(invocation) else { return }
-        NSWorkspace.shared.open(updated)
+        guard let updated = CommandURLCodec.encode(invocation) else {
+            FinderSyncLog.write("菜单点击失败：URL 编码失败 \(invocation.action.rawValue)")
+            return
+        }
+        let opened = NSWorkspace.shared.open(updated)
+        FinderSyncLog.write("菜单点击 \(invocation.action.rawValue) 项数=\(invocation.paths.count) 发送=\(opened)")
     }
 
     private func badgeImage(text: String, color: NSColor) -> NSImage {
@@ -246,9 +272,43 @@ private func darwinCallback(
     _ object: UnsafeRawPointer?,
     _ userInfo: CFDictionary?
 ) {
-    guard let observer else { return }
-    let controller = Unmanaged<FinderSyncController>.fromOpaque(observer).takeUnretainedValue()
-    DispatchQueue.main.async {
-        controller.reloadFromDisk()
+    guard observer != nil else { return }
+    guard let controller = liveController else { return }
+    DispatchQueue.main.async { [weak controller] in
+        controller?.reloadFromDisk()
+    }
+}
+
+
+/// 扩展自己的日志：写进共享目录，便于排查「点了没反应」到底卡在哪一步。
+enum FinderSyncLog {
+    static func write(_ line: String) {
+        let url = SupportPaths.root.appendingPathComponent("macsvn.log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let text = "\(stamp) [访达扩展] \(line)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(text.utf8))
+            try? handle.close()
+        } else {
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
+
+/// 扩展侧日志：写进共享目录，用于判断「点了没反应」卡在扩展还是主程序。
+enum ExtensionLog {
+    static func write(_ line: String) {
+        let url = SupportPaths.root.appendingPathComponent("macsvn.log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let text = "\(stamp) [访达扩展] \(line)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(text.utf8))
+            try? handle.close()
+        } else {
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 }
