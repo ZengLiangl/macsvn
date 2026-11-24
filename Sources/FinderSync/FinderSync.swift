@@ -196,12 +196,13 @@ final class FinderSyncController: FIFinderSync {
         _ enabled: Bool,
         _ paths: [String]
     ) {
-        guard enabled else { return }
         // shift 由点击时的键盘状态决定（见 fire），这里保持 false
         guard let url = CommandURLCodec.encode(CommandInvocation(action: action, paths: paths)) else { return }
         let item = NSMenuItem(title: title, action: #selector(fire(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = url
+        // 不可用时置灰而不是隐藏：菜单结构保持稳定，用户能看出「有这项、当前不可用」
+        item.isEnabled = enabled
         menu.addItem(item)
     }
 

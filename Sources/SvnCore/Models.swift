@@ -248,6 +248,24 @@ public struct StatusFile: Codable, Equatable {
         return BadgeKind(rawValue: raw)
     }
 
+    /// 取生效角标：自己没有角标时，沿用最近祖先的。
+    ///
+    /// `svn status` 只报有变化的节点，未版本化目录里的文件不会单独出现。
+    /// 若只查精确匹配，这类文件会「看起来干净」，菜单就什么都不能做。
+    /// 它们在未版本化目录里，因此继承 unversioned 才是对的。
+    public func effectiveBadge(for path: String) -> BadgeKind? {
+        let path = PathID.normalize(path)
+        if let raw = badges[path] { return BadgeKind(rawValue: raw) }
+        var current = path
+        while true {
+            let parent = (current as NSString).deletingLastPathComponent
+            if parent == current || parent.isEmpty { break }
+            if let raw = badges[parent] { return BadgeKind(rawValue: raw) }
+            current = parent
+        }
+        return nil
+    }
+
     public func contains(_ path: String) -> Bool {
         PathID.longestRoot(for: path, roots: roots) != nil
     }

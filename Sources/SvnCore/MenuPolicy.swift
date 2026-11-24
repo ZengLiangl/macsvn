@@ -68,7 +68,8 @@ public enum MenuPolicy {
         flags.cleanup = true
         flags.refresh = true
 
-        let badges = paths.map { status.badge(for: $0) }
+        // 用 effectiveBadge：未版本化目录里的文件本身没有角标，需继承祖先的
+        let badges = paths.map { status.effectiveBadge(for: $0) }
         let allUnversioned = badges.allSatisfy { $0 == .unversioned }
 
         // 提交：已修改(已替换)、新添加(复制的、新移来)、已删除(已移走、已丢失)
