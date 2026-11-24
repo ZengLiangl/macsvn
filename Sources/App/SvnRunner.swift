@@ -42,10 +42,7 @@ final class SvnTask {
         proc.executableURL = URL(fileURLWithPath: exe)
         proc.arguments = args
         proc.currentDirectoryURL = cwd
-        var env = ProcessInfo.processInfo.environment
-        env["LC_ALL"] = "C"
-        env["LANG"] = "C"
-        proc.environment = env
+        proc.environment = Self.childEnvironment()
         let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
         proc.standardInput = slaveHandle
         proc.standardOutput = slaveHandle
@@ -128,6 +125,7 @@ final class SvnTask {
         proc.executableURL = URL(fileURLWithPath: exe)
         proc.arguments = args
         proc.currentDirectoryURL = cwd
+        proc.environment = Self.childEnvironment()
         let out = Pipe()
         let err = Pipe()
         proc.standardOutput = out
@@ -172,6 +170,21 @@ final class SvnTask {
             display: display,
             cancelled: proc.terminationReason == .uncaughtSignal
         )
+    }
+
+    /// 子进程环境。
+    ///
+    /// svn 需要 UTF-8 locale 才能处理非 ASCII 路径：没有 LANG/LC_ALL 时，
+    /// svn 按「本地编码」把参数转成 UTF-8，中文路径会被转坏，报
+    ///   E155010 找不到节点，或 E000022 Can't convert string from native encoding
+    /// 从访达启动的 app 不继承 shell 的 locale，所以必须显式补上。
+    /// 用 C.UTF-8 而非 zh_CN.UTF-8：错误与提示保持英文，便于匹配
+    /// "Username:" / "Password" 等交互提示。
+    static func childEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["LC_ALL"] = "C.UTF-8"
+        env["LANG"] = "C.UTF-8"
+        return env
     }
 
     static func display(exe: String, args: [String]) -> String {
