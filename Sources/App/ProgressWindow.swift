@@ -51,6 +51,7 @@ final class ProgressWindow: NSWindowController, NSWindowDelegate {
         output.string = ""
         window?.center()
         showWindow(nil)
+        window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -75,12 +76,20 @@ final class ProgressWindow: NSWindowController, NSWindowDelegate {
 }
 
 enum Dialog {
+    /// 从访达菜单触发时应用在后台，先把窗口提到最前再模态，否则用户看不到任何反馈。
+    static func bringToFront(_ alert: NSAlert) {
+        alert.window.level = .modalPanel
+        alert.window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @discardableResult
     static func info(_ title: String, _ message: String) -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "好")
+        bringToFront(alert)
         alert.runModal()
         return true
     }
@@ -91,6 +100,7 @@ enum Dialog {
         alert.informativeText = message
         alert.addButton(withTitle: ok)
         alert.addButton(withTitle: "取消")
+        bringToFront(alert)
         return alert.runModal() == .alertFirstButtonReturn
     }
 

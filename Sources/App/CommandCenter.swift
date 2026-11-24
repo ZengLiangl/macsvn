@@ -216,7 +216,13 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             let wanted = Set(paths)
             let entries = SvnXML.parseStatus(result.stdoutText, cwd: cwd).filter { entry in
                 guard ["added", "modified", "deleted", "replaced", "conflicted"].contains(entry.item) else { return false }
-                return wanted.contains(where: { PathID.isInside(entry.path, root: $0) })
+                // 除了选中项本身及其子项，还要带上「选中项的祖先」：
+                // 稀疏检出里用 add --parents 加进来的父目录同样是 A 状态，
+                // 只提交文件本身 svn 会报 E200009（父目录不在提交里）。
+                return wanted.contains { target in
+                    PathID.isInside(entry.path, root: target)
+                        || PathID.isInside(target, root: entry.path)
+                }
             }
             guard !entries.isEmpty else {
                 Dialog.info("提交", "没有可提交的改动。")
@@ -338,6 +344,14 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             }
         }
         show(window)
+    }
+
+    /// 把窗口提到所有应用之上。macOS 14+ 的 activate 常被忽略，
+    /// orderFrontRegardless 不依赖激活状态，能保证用户看到反馈。
+    private func bringToFront(_ window: NSWindow?) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        window?.orderFrontRegardless()
     }
 
     private func withPaths(_ invocation: CommandInvocation, _ paths: [String], then: @escaping ([String]) -> Void) {
@@ -489,6 +503,9 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     private func show(_ controller: NSWindowController) {
         keep(controller)
         controller.showWindow(nil)
+        // macOS 14+ 不再允许后台应用抢焦点，单靠 activate 窗口仍可能被访达盖住。
+        // orderFrontRegardless 能把窗口提到最前，用户才看得到"点了有反应"。
+        controller.window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
