@@ -8,6 +8,8 @@
 	<string>macsvn</string>
 	<key>CFBundleExecutable</key>
 	<string>macsvn</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.macsvn</string>
 	<key>CFBundleInfoDictionaryVersion</key>

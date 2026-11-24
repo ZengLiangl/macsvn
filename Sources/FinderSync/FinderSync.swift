@@ -99,7 +99,15 @@ final class FinderSyncController: FIFinderSync {
 
     override var toolbarItemName: String { "macsvn" }
     override var toolbarItemToolTip: String { "macsvn 版本控制" }
-    override var toolbarItemImage: NSImage { badgeImage(text: "S", color: .systemBlue) }
+    override var toolbarItemImage: NSImage {
+        // 有应用图标就用它，取不到再退回画出来的 S 角标
+        if let url = Bundle(for: FinderSyncController.self).url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 18, height: 18)
+            return icon
+        }
+        return badgeImage(text: "S", color: .systemBlue)
+    }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu {
         cache = database.loadStatus()

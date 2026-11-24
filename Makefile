@@ -18,7 +18,7 @@ IDENTITY ?= -
 all: $(APP)/Contents/MacOS/macsvn
 
 $(APP)/Contents/MacOS/macsvn: $(APP_SRC) $(EXT_SRC) Config/App-Info.plist Config/Finder-Info.plist
-	mkdir -p $(APP)/Contents/MacOS $(APPEX)/Contents/MacOS
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources $(APPEX)/Contents/MacOS $(APPEX)/Contents/Resources
 	$(SWIFTC) -framework AppKit -framework CoreServices -framework Security -o $(APP)/Contents/MacOS/macsvn $(APP_SRC)
 	# 扩展必须链接成 MH_EXECUTE 并把入口点设成 NSExtensionMain。
 	# 用 -bundle 生成的是 MH_BUNDLE，codesign 不会把 entitlements 写进这类文件，
@@ -30,6 +30,8 @@ $(APP)/Contents/MacOS/macsvn: $(APP_SRC) $(EXT_SRC) Config/App-Info.plist Config
 		-o $(APPEX)/Contents/MacOS/FinderSync $(EXT_SRC)
 	cp Config/App-Info.plist $(APP)/Contents/Info.plist
 	cp Config/Finder-Info.plist $(APPEX)/Contents/Info.plist
+	cp Config/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
+	cp Config/AppIcon.icns $(APPEX)/Contents/Resources/AppIcon.icns
 	codesign --force --sign "$(IDENTITY)" --entitlements Config/FinderSync.entitlements $(APPEX)
 	codesign --force --sign "$(IDENTITY)" --entitlements Config/App.entitlements $(APP)
 	$(MAKE) verify
