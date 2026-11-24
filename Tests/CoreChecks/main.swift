@@ -75,4 +75,76 @@ for safe in ["更新版本号", "1", "release 1.2.3", "修复 bug", "", "工作�
 for latin in ["Résumé", "Grüße", "Ångström", "naïve café", "Español", "£100"] {
     check(TextRepair.repairMojibake(latin) == latin, "must keep latin: \(latin)")
 }
+// ---- 文档要求：菜单可用性规则 ----
+let wcStatus = StatusFile(
+    roots: ["/wc"], scanned: ["/wc"],
+    badges: [
+        "/wc/mod.txt": "modified",
+        "/wc/add.txt": "added",
+        "/wc/del.txt": "deleted",
+        "/wc/new.txt": "unversioned",
+        "/wc/plain.txt": ""
+    ],
+    needsLock: ["/wc/plain.txt"]
+)
+
+// 提交：已修改 / 新添加 / 已删除 时可用
+check(MenuPolicy.flags(paths: ["/wc/mod.txt"], status: wcStatus).commit, "commit on modified")
+check(MenuPolicy.flags(paths: ["/wc/add.txt"], status: wcStatus).commit, "commit on added")
+check(MenuPolicy.flags(paths: ["/wc/del.txt"], status: wcStatus).commit, "commit on deleted")
+check(!MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus).commit, "no commit on clean")
+
+// 更新：受版本控制即可
+check(MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus).update, "update in wc")
+check(!MenuPolicy.flags(paths: ["/outside"], status: wcStatus).update, "no update outside")
+
+// 比较
+check(MenuPolicy.flags(paths: ["/wc/mod.txt", "/wc/add.txt"], status: wcStatus).diffTwo, "diff two")
+check(MenuPolicy.flags(paths: ["/wc/mod.txt"], status: wcStatus).diffBase, "diff base on modified")
+check(!MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus).diffBase, "no diff base on clean")
+
+// 稍后比较 → 与…比较
+let marked = MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus)
+check(marked.compareLater, "compare later available")
+let withBase = MenuPolicy.flags(
+    paths: ["/wc/mod.txt"],
+    status: wcStatus,
+    clipboard: ClipboardState(compareBase: "/wc/plain.txt")
+)
+check(withBase.compareWith, "compare with after later")
+let sameBase = MenuPolicy.flags(
+    paths: ["/wc/plain.txt"],
+    status: wcStatus,
+    clipboard: ClipboardState(compareBase: "/wc/plain.txt")
+)
+check(!sameBase.compareWith, "no compare with itself")
+
+// 粘贴：复制后可用，且目标不能是来源本身
+let emptyClip = MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus)
+check(!emptyClip.paste, "no paste without clipboard")
+let copied = ClipboardState(paths: ["/wc/mod.txt"], isMove: false)
+check(MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus, clipboard: copied).paste, "paste after copy")
+check(!MenuPolicy.flags(paths: ["/wc/mod.txt"], status: wcStatus, clipboard: copied).paste, "no paste onto source")
+
+// 加锁：只有带 svn:needs-lock 的文件可用
+check(MenuPolicy.flags(paths: ["/wc/plain.txt"], status: wcStatus).lock, "lock needs-lock file")
+check(!MenuPolicy.flags(paths: ["/wc/mod.txt"], status: wcStatus).lock, "no lock without needs-lock")
+
+// 设置：主菜单提升与路径选择按命令生效
+var settings = AppSettings.detected
+settings.promotedActions = ["commit", "paste"]
+check(settings.promotes(.commit) && settings.promotes(.paste), "promote settings")
+check(!settings.promotes(.update), "promote off")
+settings.confirmCommands = ["lock"]
+check(settings.asksForPaths(.lock) && !settings.asksForPaths(.add), "path pick settings")
+
+// 旧配置迁移：promoteCommitAndUpdate 应转成 提交+更新
+let legacyJSON = """
+{"svnPath":"/usr/bin/svn","promoteCommitAndUpdate":true,"toolbarUsesSelection":false,
+ "externalDiffTool":"","commitMessageHistory":[],"confirmCommands":["add"]}
+"""
+let migrated = try! JSONDecoder().decode(AppSettings.self, from: Data(legacyJSON.utf8))
+check(migrated.promotedActions.sorted() == ["commit", "update"], "legacy migration")
+check(migrated.confirmCommands == ["add"], "legacy confirm kept")
+
 print("core checks passed")

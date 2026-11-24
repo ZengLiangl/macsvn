@@ -3,7 +3,21 @@ import AppKit
 final class MainWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     private let database: AppDatabase
     private let pathField = NSTextField()
-    private let promote = NSButton(checkboxWithTitle: "把提交和更新放到访达主菜单", target: nil, action: nil)
+    /// 文档：提交、更新、比较、粘贴、加锁 可提到访达主菜单
+    private let promoteItems: [(SvnAction, String, NSButton)] = [
+        (.commit, "提交", NSButton(checkboxWithTitle: "提交", target: nil, action: nil)),
+        (.update, "更新", NSButton(checkboxWithTitle: "更新", target: nil, action: nil)),
+        (.diffBase, "比较", NSButton(checkboxWithTitle: "比较", target: nil, action: nil)),
+        (.paste, "粘贴", NSButton(checkboxWithTitle: "粘贴", target: nil, action: nil)),
+        (.lock, "加锁", NSButton(checkboxWithTitle: "加锁", target: nil, action: nil))
+    ]
+    /// 文档：添加、删除、恢复、加锁 执行前弹「选择路径」窗口
+    private let pathPickItems: [(SvnAction, String, NSButton)] = [
+        (.add, "添加", NSButton(checkboxWithTitle: "添加", target: nil, action: nil)),
+        (.deleteVersioned, "删除", NSButton(checkboxWithTitle: "删除", target: nil, action: nil)),
+        (.revert, "恢复", NSButton(checkboxWithTitle: "恢复", target: nil, action: nil)),
+        (.lock, "加锁", NSButton(checkboxWithTitle: "加锁", target: nil, action: nil))
+    ]
     private let toolbarSelection = NSButton(checkboxWithTitle: "工具栏按钮使用当前选中项", target: nil, action: nil)
     private let diffTool = NSTextField()
     private let table = NSTableView()
@@ -23,11 +37,18 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         copies = database.loadWorkingCopies()
         let settings = database.loadSettings()
         pathField.stringValue = settings.svnPath
-        promote.state = settings.promoteCommitAndUpdate ? .on : .off
+        for (action, _, box) in promoteItems {
+            box.state = settings.promotes(action) ? .on : .off
+            box.target = self
+            box.action = #selector(saveSettings)
+        }
+        for (action, _, box) in pathPickItems {
+            box.state = settings.asksForPaths(action) ? .on : .off
+            box.target = self
+            box.action = #selector(saveSettings)
+        }
         toolbarSelection.state = settings.toolbarUsesSelection ? .on : .off
         diffTool.stringValue = settings.externalDiffTool
-        promote.target = self
-        promote.action = #selector(saveSettings)
         toolbarSelection.target = self
         toolbarSelection.action = #selector(saveSettings)
         let detect = NSButton(title: "探测", target: self, action: #selector(detectSvn))
@@ -65,7 +86,11 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         let help = NSTextField(wrappingLabelWithString: "访达里要先在系统设置中启用 macsvn 的 Finder 扩展，并把工作副本登记到上面的列表。iCloud 云盘和网盘目录里不会出现右键菜单，主窗口仍然可以操作。")
         help.maximumNumberOfLines = 3
         diffTool.placeholderString = "外部比较工具，可留空"
-        let root = NSStackView(views: [pathRow, promote, toolbarSelection, diffTool, scroll, manage, commands, extensionButton, help, statusLabel])
+        let promoteRow = NSStackView(views: [NSTextField(labelWithString: "放到主菜单：")] + promoteItems.map(\.2))
+        promoteRow.orientation = .horizontal
+        let pathPickRow = NSStackView(views: [NSTextField(labelWithString: "先选路径：")] + pathPickItems.map(\.2))
+        pathPickRow.orientation = .horizontal
+        let root = NSStackView(views: [pathRow, promoteRow, pathPickRow, toolbarSelection, diffTool, scroll, manage, commands, extensionButton, help, statusLabel])
         root.orientation = .vertical
         root.alignment = .leading
         root.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
@@ -128,7 +153,12 @@ final class MainWindowController: NSWindowController, NSTableViewDataSource, NST
         }
         var settings = database.loadSettings()
         settings.svnPath = path
-        settings.promoteCommitAndUpdate = promote.state == .on
+        settings.promotedActions = promoteItems
+            .filter { $0.2.state == .on }
+            .map { $0.0.rawValue }
+        settings.confirmCommands = pathPickItems
+            .filter { $0.2.state == .on }
+            .map { $0.0.rawValue }
         settings.toolbarUsesSelection = toolbarSelection.state == .on
         settings.externalDiffTool = diffTool.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         database.saveSettings(settings)

@@ -51,7 +51,11 @@ final class StatusMonitor {
         tasks[root] = task
         let exe = database.loadSettings().svnPath
         let args = SvnCommands.globals(interactive: false, username: nil, trust: false) + SvnCommands.status(root)
+        let lockArgs = SvnCommands.globals(interactive: false, username: nil, trust: false) + SvnCommands.needsLock(root)
         DispatchQueue.global(qos: .utility).async {
+            // needs-lock 决定「加锁」菜单是否可用，和状态一起刷
+            let lockResult = task.run(exe: exe, args: lockArgs, cwd: URL(fileURLWithPath: root)) { _ in }
+            let needsLock = lockResult.code == 0 ? SvnXML.parseNeedsLock(lockResult.stdoutText, cwd: URL(fileURLWithPath: root)) : []
             let result = task.run(exe: exe, args: args, cwd: URL(fileURLWithPath: root)) { _ in }
             DispatchQueue.main.async {
                 guard self.generations[root] == generation, !result.cancelled else { return }
@@ -62,7 +66,7 @@ final class StatusMonitor {
                 }
                 let entries = SvnXML.parseStatus(result.stdoutText, cwd: URL(fileURLWithPath: root))
                 let badges = BadgeMap.make(entries: entries, root: root)
-                self.database.replaceStatus(root: root, badges: badges, scanned: true)
+                self.database.replaceStatus(root: root, badges: badges, scanned: true, needsLock: needsLock)
                 self.onStatus?("已刷新 \(URL(fileURLWithPath: root).lastPathComponent)")
             }
         }

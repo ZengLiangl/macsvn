@@ -35,6 +35,22 @@ enum SvnCommands {
         return args + ["--"] + paths
     }
     static func delete(_ paths: [String]) -> [String] { ["delete", "--"] + paths }
+    static func copy(_ paths: [String], to target: String) -> [String] {
+        ["copy", "--parents", "--"] + paths + [target]
+    }
+    static func move(_ paths: [String], to target: String) -> [String] {
+        ["move", "--parents", "--"] + paths + [target]
+    }
+    static func lock(_ paths: [String], message: String?) -> [String] {
+        var args = ["lock"]
+        if let message, !message.isEmpty { args.append(contentsOf: ["-m", message]) }
+        return args + ["--"] + paths
+    }
+    static func unlock(_ paths: [String]) -> [String] { ["unlock", "--"] + paths }
+    /// 找出带 svn:needs-lock 的路径，决定「加锁」菜单是否可用
+    static func needsLock(_ root: String) -> [String] {
+        ["propget", "-R", "--xml", "svn:needs-lock", "--", root]
+    }
     static func diff(_ paths: [String]) -> [String] { ["diff", "--"] + paths }
     static func diffRevision(_ path: String, revision: String) -> [String] {
         ["diff", "-c", revision, "--", path]

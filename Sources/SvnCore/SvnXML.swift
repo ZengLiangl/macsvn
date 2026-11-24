@@ -18,6 +18,12 @@ public enum SvnXML {
     public static func parseLog(_ xml: String) -> [LogEntry] {
         LogXML().parse(xml)
     }
+
+    /// 解析 `svn propget -R --xml svn:needs-lock` 的输出，得到需加锁的路径列表。
+    public static func parseNeedsLock(_ xml: String, cwd: URL) -> [String] {
+        NeedsLockXML(cwd: cwd).parse(xml)
+    }
+
 }
 
 public enum BadgeMap {
@@ -212,5 +218,51 @@ private final class LogXML: NSObject, XMLParserDelegate {
             stack.removeLast()
         }
         text = ""
+    }
+}
+
+
+/// 解析 `svn propget -R --xml svn:needs-lock` 的 target 路径。
+
+
+/// 只关心 <target path="…">，且其中确实声明了 svn:needs-lock 属性。
+private final class NeedsLockXML: NSObject, XMLParserDelegate {
+    private let cwd: URL
+    private var paths: [String] = []
+    private var current: String?
+    private var hasProperty = false
+
+    init(cwd: URL) { self.cwd = cwd }
+
+    func parse(_ xml: String) -> [String] {
+        let parser = XMLParser(data: Data(xml.utf8))
+        parser.delegate = self
+        parser.parse()
+        return paths
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement name: String,
+        namespaceURI: String?,
+        qualifiedName: String?,
+        attributes: [String: String] = [:]
+    ) {
+        if name == "target" {
+            current = attributes["path"]
+            hasProperty = false
+        } else if name == "property",
+                  attributes["name"] == "svn:needs-lock" {
+            hasProperty = true
+        }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+        guard name == "target", let target = current else { return }
+        if hasProperty {
+            paths.append(PathID.resolve(target, cwd: cwd))
+        }
+        current = nil
+        hasProperty = false
     }
 }

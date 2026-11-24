@@ -77,7 +77,20 @@ public final class AppDatabase {
         return readStatusUnlocked()
     }
 
-    public func replaceStatus(root: String, badges: [String: String], scanned: Bool) {
+    public func loadClipboard() -> ClipboardState {
+        lock.lock()
+        defer { lock.unlock() }
+        return read(ClipboardState.self, file: "clipboard.json") ?? ClipboardState()
+    }
+
+    public func saveClipboard(_ state: ClipboardState) {
+        lock.lock()
+        write(state, file: "clipboard.json")
+        lock.unlock()
+        SupportPaths.postChanged()
+    }
+
+    public func replaceStatus(root: String, badges: [String: String], scanned: Bool, needsLock: [String]? = nil) {
         lock.lock()
         var status = readStatusUnlocked()
         let root = PathID.normalize(root)
@@ -93,6 +106,11 @@ public final class AppDatabase {
         status.badges = status.badges.filter { !PathID.isInside($0.key, root: root) }
         for (key, value) in badges {
             status.badges[PathID.normalize(key)] = value
+        }
+        if let needsLock {
+            status.needsLock = status.needsLock.filter { !PathID.isInside($0, root: root) }
+            status.needsLock.append(contentsOf: needsLock.map(PathID.normalize))
+            status.needsLock.sort()
         }
         status.updatedAt = Date()
         write(status, file: "status.json")

@@ -122,21 +122,80 @@ public struct WorkingCopy: Codable, Equatable, Identifiable {
 
 public struct AppSettings: Codable, Equatable {
     public var svnPath: String
-    public var promoteCommitAndUpdate: Bool
+    /// 从子菜单提到访达主菜单的动作（rawValue）。文档可配五项：提交、更新、比较、粘贴、加锁。
+    public var promotedActions: [String]
     public var toolbarUsesSelection: Bool
     public var externalDiffTool: String
     public var commitMessageHistory: [String]
+    /// 执行前先弹「选择路径」窗口的动作（rawValue）。文档：添加、删除、恢复、加锁。
     public var confirmCommands: [String]
 
     public static var detected: AppSettings {
         AppSettings(
             svnPath: detectSvn(),
-            promoteCommitAndUpdate: true,
+            promotedActions: ["commit", "update"],
             toolbarUsesSelection: false,
             externalDiffTool: "",
             commitMessageHistory: [],
-            confirmCommands: ["commit", "add", "revert", "deleteVersioned"]
+            confirmCommands: ["add", "revert", "deleteVersioned", "lock"]
         )
+    }
+
+    public func promotes(_ action: SvnAction) -> Bool {
+        promotedActions.contains(action.rawValue)
+    }
+
+    public func asksForPaths(_ action: SvnAction) -> Bool {
+        confirmCommands.contains(action.rawValue)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case svnPath, promotedActions, toolbarUsesSelection, externalDiffTool
+        case commitMessageHistory, confirmCommands
+        case promoteCommitAndUpdate
+    }
+
+    public init(
+        svnPath: String,
+        promotedActions: [String],
+        toolbarUsesSelection: Bool,
+        externalDiffTool: String,
+        commitMessageHistory: [String],
+        confirmCommands: [String]
+    ) {
+        self.svnPath = svnPath
+        self.promotedActions = promotedActions
+        self.toolbarUsesSelection = toolbarUsesSelection
+        self.externalDiffTool = externalDiffTool
+        self.commitMessageHistory = commitMessageHistory
+        self.confirmCommands = confirmCommands
+    }
+
+    public init(from decoder: Decoder) throws {
+        let fallback = AppSettings.detected
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        svnPath = try c.decodeIfPresent(String.self, forKey: .svnPath) ?? fallback.svnPath
+        toolbarUsesSelection = try c.decodeIfPresent(Bool.self, forKey: .toolbarUsesSelection) ?? fallback.toolbarUsesSelection
+        externalDiffTool = try c.decodeIfPresent(String.self, forKey: .externalDiffTool) ?? ""
+        commitMessageHistory = try c.decodeIfPresent([String].self, forKey: .commitMessageHistory) ?? []
+        confirmCommands = try c.decodeIfPresent([String].self, forKey: .confirmCommands) ?? fallback.confirmCommands
+        if let promoted = try c.decodeIfPresent([String].self, forKey: .promotedActions) {
+            promotedActions = promoted
+        } else {
+            // 旧配置只有 promoteCommitAndUpdate，迁移成「提交+更新 进主菜单」
+            let legacy = try c.decodeIfPresent(Bool.self, forKey: .promoteCommitAndUpdate) ?? true
+            promotedActions = legacy ? ["commit", "update"] : []
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(svnPath, forKey: .svnPath)
+        try c.encode(promotedActions, forKey: .promotedActions)
+        try c.encode(toolbarUsesSelection, forKey: .toolbarUsesSelection)
+        try c.encode(externalDiffTool, forKey: .externalDiffTool)
+        try c.encode(commitMessageHistory, forKey: .commitMessageHistory)
+        try c.encode(confirmCommands, forKey: .confirmCommands)
     }
 
     public static func detectSvn() -> String {
@@ -150,12 +209,38 @@ public struct StatusFile: Codable, Equatable {
     public var scanned: [String]
     public var badges: [String: String]
     public var updatedAt: Date
+    /// 带 svn:needs-lock 的路径。「加锁」菜单只对它们可用。
+    public var needsLock: [String]
 
-    public init(roots: [String] = [], scanned: [String] = [], badges: [String: String] = [:], updatedAt: Date = Date()) {
+    public init(
+        roots: [String] = [],
+        scanned: [String] = [],
+        badges: [String: String] = [:],
+        updatedAt: Date = Date(),
+        needsLock: [String] = []
+    ) {
         self.roots = roots
         self.scanned = scanned
         self.badges = badges
         self.updatedAt = updatedAt
+        self.needsLock = needsLock
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case roots, scanned, badges, updatedAt, needsLock
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        roots = try c.decodeIfPresent([String].self, forKey: .roots) ?? []
+        scanned = try c.decodeIfPresent([String].self, forKey: .scanned) ?? []
+        badges = try c.decodeIfPresent([String: String].self, forKey: .badges) ?? [:]
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        needsLock = try c.decodeIfPresent([String].self, forKey: .needsLock) ?? []
+    }
+
+    public func requiresLock(_ path: String) -> Bool {
+        needsLock.contains(PathID.normalize(path))
     }
 
     public func badge(for path: String) -> BadgeKind? {
@@ -192,6 +277,16 @@ public enum SvnAction: String, Codable, CaseIterable {
     case checkout
     case register
     case open
+    // 复制 / 移动：先记下来源，再由「粘贴」落到目标目录
+    case copy
+    case move
+    case paste
+    // 加锁 / 解锁
+    case lock
+    case unlock
+    // 稍后比较 / 与…比较
+    case compareLater
+    case compareWith
 }
 
 public struct CommandInvocation: Equatable {
@@ -225,4 +320,26 @@ public struct MenuFlags: Equatable {
     public var cleanup = false
     public var refresh = false
     public var copyURL = false
+    public var copy = false
+    public var move = false
+    public var paste = false
+    public var lock = false
+    public var unlock = false
+    public var compareLater = false
+    public var compareWith = false
 }
+
+/// 复制/移动暂存区与「稍后比较」的基准文件。
+/// 扩展与主程序是两个进程，必须落盘共享，否则菜单可用性与实际执行看到的不是同一份状态。
+public struct ClipboardState: Codable, Equatable {
+    public var paths: [String]
+    public var isMove: Bool
+    public var compareBase: String?
+
+    public init(paths: [String] = [], isMove: Bool = false, compareBase: String? = nil) {
+        self.paths = paths
+        self.isMove = isMove
+        self.compareBase = compareBase
+    }
+}
+

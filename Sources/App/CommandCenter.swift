@@ -132,6 +132,42 @@ final class CommandCenter: NSObject, NSWindowDelegate {
                     self?.monitor?.scan(root: root.path)
                 }
             }
+        case .copy, .move:
+            // 文档：先记录来源，「粘贴」时才真正执行 svn copy / move
+            guard let database else { return }
+            var clip = database.loadClipboard()
+            clip.paths = paths
+            clip.isMove = invocation.action == .move
+            database.saveClipboard(clip)
+            let verb = invocation.action == .move ? "剪切" : "复制"
+            main?.setStatus("已\(verb) \(paths.count) 项，选中目标文件夹后执行「粘贴」")
+        case .paste:
+            paste(paths: paths, root: root)
+        case .lock:
+            withPaths(invocation, paths) { [weak self] chosen in
+                guard !chosen.isEmpty else { return }
+                self?.launch(title: "加锁", actionArgs: SvnCommands.lock(chosen, message: nil), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { _ in
+                    self?.monitor?.scan(root: root.path)
+                }
+            }
+        case .unlock:
+            launch(title: "解锁", actionArgs: SvnCommands.unlock(paths), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] _ in
+                self?.monitor?.scan(root: root.path)
+            }
+        case .compareLater:
+            guard let database, let path = paths.first else { return }
+            var clip = database.loadClipboard()
+            clip.compareBase = PathID.normalize(path)
+            database.saveClipboard(clip)
+            main?.setStatus("已记下「\(URL(fileURLWithPath: path).lastPathComponent)」，再选另一个文件即可比较")
+        case .compareWith:
+            guard let database,
+                  let base = database.loadClipboard().compareBase,
+                  let path = paths.first else {
+                Dialog.info("比较", "先用「稍后比较」记下一个文件。")
+                return
+            }
+            showTwoDiff(base, path, cwd: root)
         case .trashUnversioned:
             for path in paths {
                 try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
@@ -303,7 +339,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
 
     private func withPaths(_ invocation: CommandInvocation, _ paths: [String], then: @escaping ([String]) -> Void) {
         guard let database else { return }
-        let configured = database.loadSettings().confirmCommands.contains(invocation.action.rawValue)
+        let configured = database.loadSettings().asksForPaths(invocation.action)
         let ask = invocation.shift ? !configured : configured
         guard ask else {
             then(paths)
@@ -392,6 +428,38 @@ final class CommandCenter: NSObject, NSWindowDelegate {
                 if result.code == 0 { self.main?.setStatus("\(title) 完成") }
                 finish(result)
             }
+        }
+    }
+
+    /// 文档的「粘贴」：把先前 复制/剪切 记下的来源落到现在选中的目标文件夹。
+    private func paste(paths: [String], root: URL) {
+        guard let database else { return }
+        let clip = database.loadClipboard()
+        guard !clip.paths.isEmpty else {
+            Dialog.info("粘贴", "先用「复制/移动」里的「复制到剪贴板」或「剪切到剪贴板」。")
+            return
+        }
+        guard let target = paths.first else { return }
+        let isDir = isDirectory(target)
+        guard isDir else {
+            Dialog.info("粘贴", "请选中一个文件夹作为目标。")
+            return
+        }
+        let sources = clip.paths.filter { PathID.normalize($0) != PathID.normalize(target) }
+        guard !sources.isEmpty else {
+            Dialog.info("粘贴", "来源和目标相同，无法粘贴。")
+            return
+        }
+        let args = clip.isMove
+            ? SvnCommands.move(sources, to: target)
+            : SvnCommands.copy(sources, to: target)
+        let title = clip.isMove ? "移动" : "复制"
+        launch(title: title, actionArgs: args, cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+            guard result.code == 0 else { return }
+            var cleared = database.loadClipboard()
+            cleared.paths = []
+            database.saveClipboard(cleared)
+            self?.monitor?.scan(root: root.path)
         }
     }
 

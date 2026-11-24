@@ -82,26 +82,54 @@ final class FinderSyncController: FIFinderSync {
         }
     }
 
+    /// 按文档构建「macsvn 版本控制」子菜单，并把设置里勾选的项目提到访达主菜单。
     private func contextMenu(paths: [String]) -> NSMenu {
-        let flags = MenuPolicy.flags(paths: paths, status: cache)
+        let clipboard = database.loadClipboard()
+        let flags = MenuPolicy.flags(paths: paths, status: cache, clipboard: clipboard)
         if !flags.inWorkingCopy {
             return outsideMenu(paths: paths)
         }
         let settings = database.loadSettings()
         let menu = NSMenu()
         menu.autoenablesItems = false
-        if settings.promoteCommitAndUpdate {
-            add(menu, "提交…", .commit, flags.commit, paths)
-            add(menu, "更新", .update, flags.update, paths)
+
+        // 文档：提交、更新、比较、粘贴、加锁 可移到主菜单
+        if settings.promotes(.commit) { add(menu, "提交…", .commit, flags.commit, paths) }
+        if settings.promotes(.update) { add(menu, "更新", .update, flags.update, paths) }
+        if settings.promotes(.diffTwo) || settings.promotes(.diffBase) {
+            if let item = compareItem(flags: flags, paths: paths) { menu.addItem(item) }
         }
+        if settings.promotes(.paste) { add(menu, "粘贴", .paste, flags.paste, paths) }
+        if settings.promotes(.lock) {
+            add(menu, "加锁…", .lock, flags.lock, paths)
+            add(menu, "解锁", .unlock, flags.unlock, paths)
+        }
+
         let sub = NSMenu()
         sub.autoenablesItems = false
-        if !settings.promoteCommitAndUpdate {
-            add(sub, "提交…", .commit, flags.commit, paths)
-            add(sub, "更新", .update, flags.update, paths)
+        if !settings.promotes(.commit) { add(sub, "提交…", .commit, flags.commit, paths) }
+        if !settings.promotes(.update) { add(sub, "更新", .update, flags.update, paths) }
+        if !(settings.promotes(.diffTwo) || settings.promotes(.diffBase)),
+           let item = compareItem(flags: flags, paths: paths) {
+            sub.addItem(item)
+        }
+        if !settings.promotes(.paste) {
+            add(sub, "粘贴", .paste, flags.paste, paths)
         }
         add(sub, "更新至指定版本…", .updateToRevision, flags.updateToRevision, paths)
         add(sub, "增加…", .add, flags.add, paths)
+
+        // 复制 / 移动：文档要求先复制或剪切，粘贴项才可用
+        let copyMove = NSMenu()
+        copyMove.autoenablesItems = false
+        add(copyMove, "复制到剪贴板", .copy, flags.copy, paths)
+        add(copyMove, "剪切到剪贴板", .move, flags.move, paths)
+        if copyMove.items.count > 0 {
+            let item = NSMenuItem(title: "复制/移动", action: nil, keyEquivalent: "")
+            item.submenu = copyMove
+            sub.addItem(item)
+        }
+
         add(sub, "撤销增加", .undoAdd, flags.undoAdd, paths)
         let deletion = NSMenu()
         deletion.autoenablesItems = false
@@ -112,25 +140,42 @@ final class FinderSyncController: FIFinderSync {
             item.submenu = deletion
             sub.addItem(item)
         }
-        let diff = NSMenu()
-        diff.autoenablesItems = false
-        add(diff, "与 BASE 比较", .diffBase, flags.diffBase, paths)
-        add(diff, "比较这两项", .diffTwo, flags.diffTwo, paths)
-        if diff.items.count > 0 {
-            let item = NSMenuItem(title: "比较", action: nil, keyEquivalent: "")
-            item.submenu = diff
-            sub.addItem(item)
+        add(sub, "恢复…", .revert, flags.revert, paths)
+
+        if !settings.promotes(.lock) {
+            add(sub, "加锁…", .lock, flags.lock, paths)
+            add(sub, "解锁", .unlock, flags.unlock, paths)
         }
+
         add(sub, "显示信息", .info, flags.info, paths)
         add(sub, "检视修改", .changes, flags.changes, paths)
         add(sub, "显示日志…", .log, flags.log, paths)
         add(sub, "清理…", .cleanup, flags.cleanup, paths)
         add(sub, "刷新图标", .refresh, flags.refresh, paths)
         add(sub, "复制 URL", .copyURL, flags.copyURL, paths)
-        let parent = NSMenuItem(title: "macsvn", action: nil, keyEquivalent: "")
+
+        let parent = NSMenuItem(title: "macsvn 版本控制", action: nil, keyEquivalent: "")
         parent.submenu = sub
         menu.addItem(parent)
         return menu
+    }
+
+    /// 文档：选两项 →「比较两者」；选一项且已修改/新添加/已删除 →「与 Base 版本比较」；
+    /// 做过「稍后比较」后再选另一文件 →「与 … 比较」。
+    private func compareItem(flags: MenuFlags, paths: [String]) -> NSMenuItem? {
+        let diff = NSMenu()
+        diff.autoenablesItems = false
+        add(diff, "比较两者", .diffTwo, flags.diffTwo, paths)
+        add(diff, "与 BASE 版本比较", .diffBase, flags.diffBase, paths)
+        let base = database.loadClipboard().compareBase
+        if flags.compareWith, let base {
+            add(diff, "与「\(URL(fileURLWithPath: base).lastPathComponent)」比较", .compareWith, true, paths)
+        }
+        add(diff, "稍后比较", .compareLater, flags.compareLater, paths)
+        guard diff.items.count > 0 else { return nil }
+        let item = NSMenuItem(title: "比较", action: nil, keyEquivalent: "")
+        item.submenu = diff
+        return item
     }
 
     private func outsideMenu(paths: [String]) -> NSMenu {
@@ -144,8 +189,15 @@ final class FinderSyncController: FIFinderSync {
         return menu
     }
 
-    private func add(_ menu: NSMenu, _ title: String, _ action: SvnAction, _ enabled: Bool, _ paths: [String]) {
+    private func add(
+        _ menu: NSMenu,
+        _ title: String,
+        _ action: SvnAction,
+        _ enabled: Bool,
+        _ paths: [String]
+    ) {
         guard enabled else { return }
+        // shift 由点击时的键盘状态决定（见 fire），这里保持 false
         guard let url = CommandURLCodec.encode(CommandInvocation(action: action, paths: paths)) else { return }
         let item = NSMenuItem(title: title, action: #selector(fire(_:)), keyEquivalent: "")
         item.target = self
@@ -155,7 +207,11 @@ final class FinderSyncController: FIFinderSync {
 
     @objc private func fire(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL, var invocation = CommandURLCodec.decode(url) else { return }
-        invocation.shift = NSEvent.modifierFlags.contains(.shift)
+        // 编码时 shift=true 表示「这个命令支持 SHIFT 临时切换路径选择窗口」，
+        // 这里再按实际按键决定是否翻转。不支持的命令保持 false。
+        if invocation.shift {
+            invocation.shift = NSEvent.modifierFlags.contains(.shift)
+        }
         guard let updated = CommandURLCodec.encode(invocation) else { return }
         NSWorkspace.shared.open(updated)
     }
