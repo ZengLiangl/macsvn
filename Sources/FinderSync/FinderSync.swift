@@ -214,6 +214,7 @@ final class FinderSyncController: FIFinderSync {
         let parent = NSMenuItem(title: "macsvn 版本控制", action: nil, keyEquivalent: "")
         parent.submenu = sub
         menu.addItem(parent)
+        FinderSyncLog.write("菜单完成：顶层项=\(menu.items.count) 子菜单项=\(sub.items.count)")
         return menu
     }
 
