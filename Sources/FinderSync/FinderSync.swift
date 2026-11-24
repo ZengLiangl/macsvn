@@ -162,6 +162,15 @@ final class FinderSyncController: FIFinderSync {
 
         let sub = NSMenu()
         sub.autoenablesItems = false
+
+        // 诊断项：target=self 的普通项，只写日志、不调主程序
+        let probe1 = NSMenuItem(title: "① 测试点击（target=self）", action: #selector(probeSelf(_:)), keyEquivalent: "")
+        probe1.target = self
+        sub.addItem(probe1)
+        // 诊断项：target=nil，走响应链
+        let probe2 = NSMenuItem(title: "② 测试点击（target=nil）", action: #selector(probeNil(_:)), keyEquivalent: "")
+        probe2.target = nil
+        sub.addItem(probe2)
         // 无论是否提升到主菜单，子菜单里都保留一份：
         // 主菜单项在部分系统版本上派发不稳定，子菜单是更可靠的入口。
         add(sub, "提交…", .commit, flags.commit, paths)
@@ -265,7 +274,7 @@ final class FinderSyncController: FIFinderSync {
         menu.addItem(item)
     }
 
-    @objc private func fire(_ sender: NSMenuItem) {
+    @objc func fire(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL, var invocation = CommandURLCodec.decode(url) else { return }
         // 编码时 shift=true 表示「这个命令支持 SHIFT 临时切换路径选择窗口」，
         // 这里再按实际按键决定是否翻转。不支持的命令保持 false。
@@ -278,6 +287,14 @@ final class FinderSyncController: FIFinderSync {
         }
         let opened = NSWorkspace.shared.open(updated)
         FinderSyncLog.write("菜单点击 \(invocation.action.rawValue) 项数=\(invocation.paths.count) 发送=\(opened)")
+    }
+
+    @objc func probeSelf(_ sender: NSMenuItem) {
+        FinderSyncLog.write("探针① 被点击（target=self）")
+    }
+
+    @objc func probeNil(_ sender: NSMenuItem) {
+        FinderSyncLog.write("探针② 被点击（target=nil）")
     }
 
     private func badgeImage(text: String, color: NSColor) -> NSImage {
