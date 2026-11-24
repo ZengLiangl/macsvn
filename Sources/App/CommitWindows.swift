@@ -1,61 +1,91 @@
 import AppKit
 
-final class CommitWindow: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate {
-    private let entries: [StatusEntry]
-    private var checks: [Bool]
+/// 勾选框知道自己是哪个节点，避免用行号导致排序/展开后错位
+final class CommitCheckbox: NSButton {
+    var nodePath: String = ""
+}
+
+final class CommitWindow: NSWindowController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextViewDelegate {
+    private let roots: [CommitNode]
+    private var selected: Set<String> = []
     private let history: [String]
-    private let onCommit: (String, [String]) -> Void
-    private let table = NSTableView()
+    private let onCommit: (String, [String], [String]) -> Void
+    private let outline = NSOutlineView()
     private let message = NSTextView()
     private let button = NSButton(title: "提交", target: nil, action: nil)
+    private let summaryLabel = NSTextField(labelWithString: "")
 
-    init(entries: [StatusEntry], history: [String], onCommit: @escaping (String, [String]) -> Void) {
-        self.entries = entries
+    init(roots: [CommitNode], history: [String], onCommit: @escaping (String, [String], [String]) -> Void) {
+        self.roots = roots
         self.history = history
         self.onCommit = onCommit
-        checks = entries.map { $0.item != "conflicted" && $0.badge != .conflict }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 600),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "提交"
         super.init(window: window)
+
+        // 默认勾上所有「已有改动」，未加入的留给用户自己挑
+        func preselect(_ nodes: [CommitNode]) {
+            for node in nodes {
+                if node.isUnversioned {
+                    preselect(node.children)
+                } else {
+                    if !node.isDirectory { selected.insert(node.path) }
+                    preselect(node.children)
+                }
+            }
+        }
+        preselect(roots)
+
         button.target = self
         button.action = #selector(commit)
+
         let popup = NSPopUpButton()
         popup.addItem(withTitle: "最近说明")
         history.forEach { popup.addItem(withTitle: $0) }
         popup.target = self
         popup.action = #selector(useHistory(_:))
+
         message.font = NSFont.systemFont(ofSize: 13)
         message.delegate = self
         message.isRichText = false
         let messageScroll = NSScrollView()
         messageScroll.documentView = message
         messageScroll.hasVerticalScroller = true
-        messageScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
-        table.dataSource = self
-        table.delegate = self
-        let check = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("check"))
-        check.title = ""
-        check.width = 28
-        let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("item"))
-        item.title = "状态"
-        item.width = 90
-        let path = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
-        path.title = "路径"
-        path.width = 480
-        table.addTableColumn(check)
-        table.addTableColumn(item)
-        table.addTableColumn(path)
-        let tableScroll = NSScrollView()
-        tableScroll.documentView = table
-        tableScroll.hasVerticalScroller = true
-        let hint = NSTextField(wrappingLabelWithString: entries.contains(where: { $0.item == "conflicted" }) ? "有冲突的路径默认不提交。" : "说明不能为空。")
-        let stack = NSStackView(views: [popup, messageScroll, hint, tableScroll, button])
+        messageScroll.heightAnchor.constraint(equalToConstant: 90).isActive = true
+
+        let allButton = NSButton(title: "全选", target: self, action: #selector(selectAllNodes))
+        let noneButton = NSButton(title: "全不选", target: self, action: #selector(clearAllNodes))
+        let expandButton = NSButton(title: "展开全部", target: self, action: #selector(expandAll))
+        let collapseButton = NSButton(title: "收起全部", target: self, action: #selector(collapseAll))
+        let tools = NSStackView(views: [allButton, noneButton, expandButton, collapseButton])
+
+        let outline = self.outline
+        outline.dataSource = self
+        outline.delegate = self
+        outline.allowsMultipleSelection = false
+        for (id, title, width) in [("check", "", 30), ("state", "状态", 110), ("name", "名称", 560)] {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+            column.title = title
+            column.width = CGFloat(width)
+            outline.addTableColumn(column)
+            if id == "check" { outline.outlineTableColumn = column }
+        }
+        outline.autoresizesOutlineColumn = false
+        let scroll = NSScrollView()
+        scroll.documentView = outline
+        scroll.hasVerticalScroller = true
+
+        summaryLabel.font = NSFont.systemFont(ofSize: 12)
+        summaryLabel.textColor = .secondaryLabelColor
+
+        let stack = NSStackView(views: [popup, messageScroll, tools, scroll, summaryLabel, button])
         stack.orientation = .vertical
+        stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView = stack
@@ -63,55 +93,151 @@ final class CommitWindow: NSWindowController, NSTableViewDataSource, NSTableView
             stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor)
+            stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260)
         ])
-        refreshButton()
+
+        outline.reloadData()
+        outline.expandItem(nil, expandChildren: true)
+        refresh()
         window.center()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
+    // MARK: - Outline 数据源
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if tableColumn?.identifier.rawValue == "check" {
-            let box = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggle(_:)))
-            box.tag = row
-            box.state = checks[row] ? .on : .off
-            box.isEnabled = entries[row].item != "conflicted"
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        guard let node = item as? CommitNode else { return roots.count }
+        return node.children.count
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        guard let node = item as? CommitNode else { return roots[index] }
+        return node.children[index]
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        (item as? CommitNode)?.children.isEmpty == false
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? CommitNode else { return nil }
+        switch tableColumn?.identifier.rawValue {
+        case "check":
+            let box = CommitCheckbox(checkboxWithTitle: "", target: self, action: #selector(toggleNode(_:)))
+            box.nodePath = node.path
+            box.state = state(for: node)
             return box
+        case "state":
+            let field = NSTextField(labelWithString: node.label)
+            field.textColor = node.isUnversioned ? .secondaryLabelColor : .labelColor
+            return field
+        default:
+            return NSTextField(labelWithString: node.name)
         }
-        let value = tableColumn?.identifier.rawValue == "item" ? entries[row].item : entries[row].path
-        return NSTextField(labelWithString: value)
     }
 
-    func textDidChange(_ notification: Notification) { refreshButton() }
+    // MARK: - 勾选逻辑
 
-    @objc private func toggle(_ sender: NSButton) {
-        guard sender.tag >= 0, sender.tag < checks.count else { return }
-        checks[sender.tag] = sender.state == .on
-        refreshButton()
+    private func state(for node: CommitNode) -> NSControl.StateValue {
+        if selected.contains(node.path) { return .on }
+        // 有子项被选中时显示混合态
+        func anySelected(_ n: CommitNode) -> Bool {
+            if selected.contains(n.path) { return true }
+            return n.children.contains(where: anySelected)
+        }
+        return node.children.contains(where: anySelected) ? .mixed : .off
     }
+
+    private func descendants(_ node: CommitNode) -> [String] {
+        var result = [node.path]
+        node.children.forEach { result.append(contentsOf: descendants($0)) }
+        return result
+    }
+
+    @objc private func toggleNode(_ sender: CommitCheckbox) {
+        guard let node = node(at: sender.nodePath) else { return }
+        let turnOn = sender.state != .on ? true : false
+        let paths = descendants(node)
+        if turnOn {
+            // 目录勾上时，未加入的子项交给上级统一 add，不单独勾
+            if node.isUnversioned && node.isDirectory {
+                selected.insert(node.path)
+                for path in paths.dropFirst() { selected.remove(path) }
+            } else {
+                selected.formUnion(paths)
+            }
+        } else {
+            paths.forEach { selected.remove($0) }
+        }
+        outline.reloadData()
+        refresh()
+    }
+
+    private func node(at path: String) -> CommitNode? {
+        func find(_ nodes: [CommitNode]) -> CommitNode? {
+            for node in nodes {
+                if node.path == path { return node }
+                if let hit = find(node.children) { return hit }
+            }
+            return nil
+        }
+        return find(roots)
+    }
+
+    @objc private func selectAllNodes() {
+        func all(_ nodes: [CommitNode]) {
+            for node in nodes {
+                if node.isUnversioned && node.isDirectory {
+                    selected.insert(node.path)
+                    continue
+                }
+                selected.insert(node.path)
+                all(node.children)
+            }
+        }
+        all(roots)
+        outline.reloadData()
+        refresh()
+    }
+
+    @objc private func clearAllNodes() {
+        selected.removeAll()
+        outline.reloadData()
+        refresh()
+    }
+
+    @objc private func expandAll() { outline.expandItem(nil, expandChildren: true) }
+    @objc private func collapseAll() { outline.collapseItem(nil, collapseChildren: true) }
+
+    func textDidChange(_ notification: Notification) { refresh() }
 
     @objc private func useHistory(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem - 1
         guard index >= 0, index < history.count else { return }
         message.string = history[index]
-        refreshButton()
+        refresh()
     }
 
     @objc private func commit() {
         let text = message.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let paths = entries.enumerated().compactMap { checks[$0.offset] ? $0.element.path : nil }
-        guard !text.isEmpty, !paths.isEmpty else { return }
-        onCommit(text, paths)
+        let picked = CommitTree.collect(selected: selected, roots: roots)
+        guard !text.isEmpty, !picked.versioned.isEmpty || !picked.unversioned.isEmpty else { return }
+        onCommit(text, picked.versioned, picked.unversioned)
         close()
     }
 
-    private func refreshButton() {
+    private func refresh() {
+        let picked = CommitTree.collect(selected: selected, roots: roots)
+        var parts: [String] = []
+        if !picked.versioned.isEmpty { parts.append("提交 \(picked.versioned.count) 项改动") }
+        if !picked.unversioned.isEmpty { parts.append("先加入 \(picked.unversioned.count) 项") }
+        summaryLabel.stringValue = parts.isEmpty ? "先勾选要提交的内容" : parts.joined(separator: "，")
         let text = message.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        button.isEnabled = !text.isEmpty && checks.contains(true)
+        button.isEnabled = !text.isEmpty && !(picked.versioned.isEmpty && picked.unversioned.isEmpty)
     }
 }
 

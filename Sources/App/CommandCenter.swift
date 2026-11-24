@@ -215,31 +215,62 @@ final class CommandCenter: NSObject, NSWindowDelegate {
                 Dialog.info("无法读取状态", result.combinedText)
                 return
             }
-            let wanted = Set(paths)
-            let entries = SvnXML.parseStatus(result.stdoutText, cwd: cwd).filter { entry in
-                guard ["added", "modified", "deleted", "replaced", "conflicted"].contains(entry.item) else { return false }
-                // 除了选中项本身及其子项，还要带上「选中项的祖先」：
-                // 稀疏检出里用 add --parents 加进来的父目录同样是 A 状态，
-                // 只提交文件本身 svn 会报 E200009（父目录不在提交里）。
-                return wanted.contains { target in
-                    PathID.isInside(entry.path, root: target)
-                        || PathID.isInside(target, root: entry.path)
-                }
-            }
-            guard !entries.isEmpty else {
-                Dialog.info("提交", "没有可提交的改动。")
+            // 提交窗口的根：选中的目录本身，或选中文件所在的目录。
+            // 这样窗口里既能列出改动，也能列出同目录下尚未加入的文件/文件夹。
+            let anchor = paths.first ?? cwd.path
+            let root = self.isDirectory(anchor)
+                ? URL(fileURLWithPath: anchor)
+                : URL(fileURLWithPath: anchor).deletingLastPathComponent()
+            let entries = SvnXML.parseStatus(result.stdoutText, cwd: cwd)
+            let roots = CommitTree.build(root: root, entries: entries)
+            guard !roots.isEmpty else {
+                Dialog.info("提交", "这里没有可提交的改动，也没有未加入的文件。")
                 return
             }
             let history = self.database?.loadSettings().commitMessageHistory ?? []
-            let window = CommitWindow(entries: entries, history: history) { [weak self] message, chosen in
-                self?.launch(title: "提交", actionArgs: SvnCommands.commit(chosen, message: message), cwd: cwd, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { result in
-                    if result.code == 0 {
-                        self?.database?.rememberCommitMessage(message)
-                        self?.monitor?.scan(root: cwd.path)
-                    }
-                }
+            let window = CommitWindow(roots: roots, history: history) { [weak self] message, versioned, unversioned in
+                self?.commitAll(message: message, versioned: versioned, unversioned: unversioned, cwd: cwd)
             }
             self.show(window)
+        }
+    }
+
+    /// 提交：先处理用户勾选的「未加入」项，再连同已改动项一起提交。
+    private func commitAll(message: String, versioned: [String], unversioned: [String], cwd: URL) {
+        guard !unversioned.isEmpty else {
+            finishCommit(message: message, paths: versioned, cwd: cwd)
+            return
+        }
+        // --parents：稀疏检出里上级目录可能还没纳入版本控制
+        launch(title: "加入", actionArgs: SvnCommands.add(unversioned, depth: "infinity"), cwd: cwd, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] addResult in
+            guard let self else { return }
+            guard addResult.code == 0 else { return }   // 失败时窗口已弹出，这里不再重复提示
+            self.launch(title: "读取状态", actionArgs: SvnCommands.status(cwd.path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] status in
+                guard let self, status.code == 0 else { return }
+                let wanted = Set(versioned + unversioned)
+                // 加入后重新算：新加入的上级目录同样是 A 状态，必须一起提交，
+                // 否则 svn 会报 E200009（父目录不在提交里）。
+                let final = SvnXML.parseStatus(status.stdoutText, cwd: cwd).filter { entry in
+                    guard ["added", "modified", "deleted", "replaced", "conflicted"].contains(entry.item) else { return false }
+                    return wanted.contains { target in
+                        PathID.isInside(entry.path, root: target) || PathID.isInside(target, root: entry.path)
+                    }
+                }.map(\.path)
+                self.finishCommit(message: message, paths: final, cwd: cwd)
+            }
+        }
+    }
+
+    private func finishCommit(message: String, paths: [String], cwd: URL) {
+        guard !paths.isEmpty else {
+            Dialog.info("提交", "没有可提交的内容。")
+            return
+        }
+        launch(title: "提交", actionArgs: SvnCommands.commit(paths, message: message), cwd: cwd, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+            if result.code == 0 {
+                self?.database?.rememberCommitMessage(message)
+                self?.monitor?.scan(root: cwd.path)
+            }
         }
     }
 
