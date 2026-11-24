@@ -63,4 +63,16 @@ check(dirty.commit && dirty.diffBase && !dirty.add, "dirty menu")
 check(!MenuPolicy.flags(paths: ["/other"], status: status).inWorkingCopy, "outside")
 check(RevisionInput.isValid("12") && RevisionInput.isValid("{2024-01-01}"), "revision ok")
 check(!RevisionInput.isValid("HEAD") && !RevisionInput.isValid(""), "revision bad")
+
+// 乱码还原：GBK 字节被当成 Latin-1 存进库的历史提交说明
+check(TextRepair.repairMojibake("·¢²¼SQLÎÄ¼þ hk.sql") == "发布SQL文件 hk.sql", "mojibake repair")
+check(TextRepair.repairMojibake("¸üÐÂSQLÎÄ¼þ ecp.sql") == "更新SQL文件 ecp.sql", "mojibake repair 2")
+check(TextRepair.repairMojibake("ÖÐÎÄ") == "中文", "mojibake repair cjk")
+// 正常文本必须原样保留，不能被误改
+for safe in ["更新版本号", "1", "release 1.2.3", "修复 bug", "", "工作交接目录"] {
+    check(TextRepair.repairMojibake(safe) == safe, "must keep: \(safe)")
+}
+for latin in ["Résumé", "Grüße", "Ångström", "naïve café", "Español", "£100"] {
+    check(TextRepair.repairMojibake(latin) == latin, "must keep latin: \(latin)")
+}
 print("core checks passed")

@@ -200,7 +200,7 @@ private final class LogXML: NSObject, XMLParserDelegate {
         case "date" where parent == "logentry":
             date = value
         case "msg" where parent == "logentry":
-            message = value
+            message = TextRepair.repairMojibake(value)
         case "path" where parent == "paths":
             paths.append("\(action) \(value)")
         case "logentry":

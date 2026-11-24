@@ -73,7 +73,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             Dialog.info("云盘目录", "访达扩展可能不会在这个目录显示菜单。主窗口里仍然可以操作。")
         }
         let cwd = URL(fileURLWithPath: chosen)
-        launch(title: "登记", actionArgs: SvnCommands.info([chosen]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "登记", actionArgs: SvnCommands.info([chosen]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             guard let self, let database = self.database else { return }
             guard result.code == 0, let info = SvnXML.parseInfo(result.stdoutText) else {
                 Dialog.info("不是工作副本", result.combinedText.isEmpty ? "svn info 失败。" : result.combinedText)
@@ -143,7 +143,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             guard paths.count >= 2 else { return }
             showTwoDiff(paths[0], paths[1], cwd: root)
         case .info:
-            launch(title: "信息", actionArgs: SvnCommands.info([paths[0]]), cwd: root, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+            launch(title: "信息", actionArgs: SvnCommands.info([paths[0]]), cwd: root, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
                 guard result.code == 0, let info = SvnXML.parseInfo(result.stdoutText) else {
                     Dialog.info("信息", result.combinedText)
                     return
@@ -169,7 +169,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     }
 
     private func prepareCommit(paths: [String], cwd: URL) {
-        launch(title: "读取状态", actionArgs: SvnCommands.status(cwd.path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "读取状态", actionArgs: SvnCommands.status(cwd.path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             guard let self, result.code == 0 else {
                 Dialog.info("无法读取状态", result.combinedText)
                 return
@@ -197,7 +197,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     }
 
     private func showChanges(_ root: URL) {
-        launch(title: "检视修改", actionArgs: SvnCommands.status(root.path), cwd: root, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "检视修改", actionArgs: SvnCommands.status(root.path), cwd: root, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             guard result.code == 0 else {
                 Dialog.info("检视修改", result.combinedText)
                 return
@@ -211,14 +211,14 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     }
 
     private func showLog(_ path: String, cwd: URL) {
-        launch(title: "日志", actionArgs: SvnCommands.log(path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "日志", actionArgs: SvnCommands.log(path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             guard result.code == 0 else {
                 Dialog.info("日志", result.combinedText)
                 return
             }
             let entries = SvnXML.parseLog(result.stdoutText)
             let window = LogWindow(entries: entries) { [weak self] entry in
-                self?.launch(title: "r\(entry.revision)", actionArgs: SvnCommands.diffRevision(path, revision: entry.revision), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 1) { diff in
+                self?.launch(title: "r\(entry.revision)", actionArgs: SvnCommands.diffRevision(path, revision: entry.revision), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 1, quiet: true) { diff in
                     self?.show(TextWindow(title: "r\(entry.revision)", text: diff.stdoutText.isEmpty ? diff.combinedText : diff.stdoutText))
                 }
             }
@@ -228,10 +228,10 @@ final class CommandCenter: NSObject, NSWindowDelegate {
 
     private func showBaseDiff(_ path: String, cwd: URL) {
         let tool = database?.loadSettings().externalDiffTool ?? ""
-        launch(title: "比较", actionArgs: SvnCommands.catBase(path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] base in
+        launch(title: "比较", actionArgs: SvnCommands.catBase(path), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] base in
             guard let self else { return }
             if base.code != 0 {
-                self.launch(title: "比较", actionArgs: SvnCommands.diff([path]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 1) { diff in
+                self.launch(title: "比较", actionArgs: SvnCommands.diff([path]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 1, quiet: true) { diff in
                     self.show(TextWindow(title: "比较", text: diff.combinedText))
                 }
                 return
@@ -257,7 +257,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     }
 
     private func showTwoDiff(_ old: String, _ new: String, cwd: URL) {
-        launch(title: "比较", actionArgs: SvnCommands.diffTwo(old: old, new: new), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "比较", actionArgs: SvnCommands.diffTwo(old: old, new: new), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             self?.show(TextWindow(title: "比较", text: result.combinedText))
         }
     }
@@ -265,7 +265,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
     private func copyURL(_ paths: [String]) {
         guard let path = paths.first else { return }
         let cwd = URL(fileURLWithPath: path)
-        launch(title: "复制 URL", actionArgs: SvnCommands.info([path]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] result in
+        launch(title: "复制 URL", actionArgs: SvnCommands.info([path]), cwd: cwd, write: false, password: nil, username: nil, trust: false, promptsLeft: 2, quiet: true) { [weak self] result in
             guard result.code == 0, let info = SvnXML.parseInfo(result.stdoutText), !info.url.isEmpty else {
                 Dialog.info("复制 URL", result.combinedText)
                 return
@@ -324,6 +324,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         username: String?,
         trust: Bool,
         promptsLeft: Int,
+        quiet: Bool = false,
         finish: @escaping (SvnResult) -> Void
     ) {
         guard let database else { return }
@@ -343,25 +344,30 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         let account = database.workingCopy(containing: cwd.path)?.repositoryRoot ?? ""
         let name = username ?? database.workingCopy(containing: cwd.path)?.username
         let args = SvnCommands.globals(interactive: password != nil, username: name, trust: trust) + actionArgs
+        // quiet：只读的取数命令（日志/状态/信息/比较）不弹进度窗口。
+        // 这类输出是给程序解析的，原样显示出来只是一屏 XML；它们的失败
+        // 已经由各自的 finish 用对话框或文本窗口呈现，不需要第二个框。
         let progress = ProgressWindow()
-        keep(progress)
-        progress.present(title: title, command: SvnTask.display(exe: exe, args: args))
+        if !quiet {
+            keep(progress)
+            progress.present(title: title, command: SvnTask.display(exe: exe, args: args))
+        }
         let task = SvnTask()
         progress.onStop = { task.cancel() }
         DispatchQueue.global(qos: .userInitiated).async {
             let result: SvnResult
             if let password {
                 result = task.runPty(exe: exe, args: args, cwd: cwd, username: name ?? "", password: password) { chunk in
-                    progress.append(chunk)
+                    if !quiet { progress.append(chunk) }
                 }
             } else {
                 result = task.run(exe: exe, args: args, cwd: cwd) { chunk in
-                    progress.append(chunk)
+                    if !quiet { progress.append(chunk) }
                 }
             }
             DispatchQueue.main.async {
                 if write { self.busy.remove(root) }
-                progress.finish(result)
+                if !quiet { progress.finish(result) }
                 AppLog.write("\(result.display) -> \(result.code)")
                 if result.code != 0, promptsLeft > 0, SvnFailure.isCertificate(result), !trust,
                    Dialog.confirm("证书不受信任", "是否只对下一次尝试临时信任服务器证书？", ok: "临时信任") {
