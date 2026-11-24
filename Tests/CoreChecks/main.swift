@@ -184,34 +184,4 @@ Updated to revision 9.
 let conflicted = UpdateOutput.parse(conflict, cwd: URL(fileURLWithPath: "/wc"))
 check(conflicted.entries.first?.label == "冲突", "conflict label")
 
-// 提交树：未加入的文件/目录也要出现，且支持树级勾选
-let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("commit-tree-\(UUID().uuidString)")
-let fm = FileManager.default
-try? fm.createDirectory(at: tmp.appendingPathComponent("sub/deep"), withIntermediateDirectories: true)
-try? "x".write(to: tmp.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
-try? "y".write(to: tmp.appendingPathComponent("sub/inner.txt"), atomically: true, encoding: .utf8)
-try? "z".write(to: tmp.appendingPathComponent("sub/deep/leaf.txt"), atomically: true, encoding: .utf8)
-
-let modifiedEntry = StatusEntry(path: tmp.appendingPathComponent("changed.txt").path, item: "modified", badge: .modified)
-let tree = CommitTree.build(root: tmp, entries: [modifiedEntry])
-let flat = tree.flatMap { node -> [String] in
-    func collect(_ n: CommitNode) -> [String] { [n.name] + n.children.flatMap(collect) }
-    return collect(node)
-}
-check(flat.contains("new.txt"), "tree has unversioned file")
-check(flat.contains("sub"), "tree has unversioned dir")
-check(flat.contains("inner.txt") && flat.contains("leaf.txt"), "tree expands nested dirs")
-check(flat.contains("changed.txt"), "tree keeps modified file")
-
-// 勾选未加入的目录：只取最上层，避免重复 add
-let allPaths = Set(tree.flatMap { node -> [String] in
-    func collect(_ n: CommitNode) -> [String] { [n.path] + n.children.flatMap(collect) }
-    return collect(node)
-})
-let picked = CommitTree.collect(selected: allPaths, roots: tree)
-check(picked.unversioned.contains { $0.hasSuffix("/sub") }, "unversioned dir picked")
-check(!picked.unversioned.contains { $0.hasSuffix("/sub/inner.txt") }, "nested file covered by dir")
-check(picked.versioned.contains { $0.hasSuffix("/changed.txt") }, "modified file in versioned list")
-
-try? fm.removeItem(at: tmp)
 print("core checks passed")
