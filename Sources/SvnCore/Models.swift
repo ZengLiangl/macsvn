@@ -135,7 +135,7 @@ public struct AppSettings: Codable, Equatable {
     public static var detected: AppSettings {
         AppSettings(
             svnPath: detectSvn(),
-            promotedActions: ["commit", "update"],
+            promotedActions: [],
             toolbarUsesSelection: false,
             externalDiffTool: "",
             commitMessageHistory: [],

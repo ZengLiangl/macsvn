@@ -188,10 +188,10 @@ check(conflicted.entries.first?.label == "冲突", "conflict label")
 check(CommitOutput.revision(from: "Sending a.txt\nCommitted revision 12068.") == "12068", "commit revision")
 check(CommitOutput.revision(from: "nothing to commit") == nil, "commit no revision")
 
-// 默认交互：提交/更新进主菜单，只有删除先问路径
+// 默认交互：命令都放在子菜单（主菜单提升未经验证，默认关闭）；只有删除先问路径
 let defaults = AppSettings.detected
-check(defaults.promotes(.commit) && defaults.promotes(.update), "default promotes commit/update")
-check(!defaults.promotes(.paste), "default does not promote paste")
+check(defaults.promotedActions.isEmpty, "default no promotion")
+check(!defaults.promotes(.commit), "commit stays in submenu by default")
 check(defaults.asksForPaths(.deleteVersioned), "delete asks paths")
 check(!defaults.asksForPaths(.add) && !defaults.asksForPaths(.revert), "add/revert no picker by default")
 
