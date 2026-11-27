@@ -35,9 +35,9 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { self.perform(invocation) }
             return
         }
-        // 命令来自访达菜单，此时访达在前台；不主动激活的话，
-        // 弹出的路径选择/进度窗口会被压在后面，看起来像"点了没反应"。
-        NSApp.activate(ignoringOtherApps: true)
+        // 不在这里抢焦点：刷新图标、复制 URL 这类命令不弹窗，
+        // 强行激活会把应用拽到前台，反而打断手上的事。
+        // 真正需要界面的地方由 show()/present() 自己激活。
         switch invocation.action {
         case .open:
             main?.showWindow(nil)
@@ -117,9 +117,8 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         case .add:
             withPaths(invocation, paths) { [weak self] chosen in
                 guard let self else { return }
-                let depth = self.addDepth(for: chosen)
-                guard let depth else { return }
-                self.launch(title: "增加", actionArgs: SvnCommands.add(chosen, depth: depth), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { _ in
+                // 目录一律整棵加进来：多弹一个「是否包含子项」只会打断操作
+                self.launch(title: "增加", actionArgs: SvnCommands.add(chosen, depth: "infinity"), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { _ in
                     self.monitor?.scan(root: root.path)
                 }
             }
@@ -132,7 +131,7 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             }
         case .deleteVersioned:
             withPaths(invocation, paths) { [weak self] chosen in
-                guard Dialog.confirm("从版本库删除", "这些路径会从工作副本中删掉，并在下次提交时从版本库删除。\n\(chosen.joined(separator: "\n"))", ok: "删除") else { return }
+                // 「选择路径」窗口里已有取消按钮，再弹一次确认属于重复
                 self?.launch(title: "删除", actionArgs: SvnCommands.delete(chosen), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { _ in
                     self?.monitor?.scan(root: root.path)
                 }
@@ -198,9 +197,6 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             showLog(paths[0], cwd: root)
         case .cleanup:
             guard let options = Dialog.cleanupOptions() else { return }
-            if options.unversioned || options.ignored {
-                guard Dialog.confirm("删除文件", "清理会永久删除未版本化或被忽略的文件。", ok: "删除未版本化文件") else { return }
-            }
             launch(title: "清理", actionArgs: SvnCommands.cleanup(root.path, unversioned: options.unversioned, ignored: options.ignored), cwd: root, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { [weak self] _ in
                 self?.monitor?.scan(root: root.path)
             }
@@ -233,9 +229,14 @@ final class CommandCenter: NSObject, NSWindowDelegate {
             let history = self.database?.loadSettings().commitMessageHistory ?? []
             let window = CommitWindow(entries: entries, history: history) { [weak self] message, chosen in
                 self?.launch(title: "提交", actionArgs: SvnCommands.commit(chosen, message: message), cwd: cwd, write: true, password: nil, username: nil, trust: false, promptsLeft: 2) { result in
-                    if result.code == 0 {
-                        self?.database?.rememberCommitMessage(message)
-                        self?.monitor?.scan(root: cwd.path)
+                    guard result.code == 0 else { return }
+                    self?.database?.rememberCommitMessage(message)
+                    self?.monitor?.scan(root: cwd.path)
+                    // 成功后给一句明确反馈：提交到了哪个修订版本
+                    if let revision = CommitOutput.revision(from: result.combinedText) {
+                        self?.main?.setStatus("提交完成 r\(revision)")
+                    } else {
+                        self?.main?.setStatus("提交完成")
                     }
                 }
             }
@@ -516,20 +517,6 @@ final class CommandCenter: NSObject, NSWindowDelegate {
         }
     }
 
-    private func addDepth(for paths: [String]) -> String? {
-        guard paths.contains(where: { isDirectory($0) }) else { return "empty" }
-        let alert = NSAlert()
-        alert.messageText = "增加"
-        alert.informativeText = "目录是否包含其中的文件？"
-        alert.addButton(withTitle: "包含子项")
-        alert.addButton(withTitle: "仅这一层")
-        alert.addButton(withTitle: "取消")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: return "infinity"
-        case .alertSecondButtonReturn: return "empty"
-        default: return nil
-        }
-    }
 
     private func isDirectory(_ path: String) -> Bool {
         var isDir: ObjCBool = false

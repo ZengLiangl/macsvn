@@ -129,3 +129,12 @@ public enum UpdateOutput {
         return UpdateEntry(action: token, path: PathID.resolve(rest, cwd: cwd))
     }
 }
+
+/// 解析 `svn commit` 的输出，取出新修订号。
+public enum CommitOutput {
+    public static func revision(from text: String) -> String? {
+        guard let range = text.range(of: "Committed revision ") else { return nil }
+        let digits = text[range.upperBound...].prefix { $0.isNumber }
+        return digits.isEmpty ? nil : String(digits)
+    }
+}
