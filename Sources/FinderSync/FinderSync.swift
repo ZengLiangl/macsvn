@@ -115,7 +115,16 @@ final class FinderSyncController: FIFinderSync {
         switch menuKind {
         case .contextualMenuForItems:
             return contextMenu(paths: (controller.selectedItemURLs() ?? []).map(\.path))
-        case .contextualMenuForContainer, .contextualMenuForSidebar:
+        case .contextualMenuForContainer:
+            // 右击选中项时，Finder 会同时问「选中项菜单」和「容器菜单」。
+            // 两个都返回同名子菜单，就会在菜单里出现两个「macsvn 版本控制」。
+            // 有选中项时容器菜单留空，交给选中项菜单负责。
+            if let selected = controller.selectedItemURLs(), !selected.isEmpty {
+                FinderSyncLog.write("容器菜单跳过：已有 \(selected.count) 个选中项")
+                return NSMenu()
+            }
+            return contextMenu(paths: controller.targetedURL().map { [$0.path] } ?? [])
+        case .contextualMenuForSidebar:
             return contextMenu(paths: controller.targetedURL().map { [$0.path] } ?? [])
         case .toolbarItemMenu:
             let settings = database.loadSettings()
